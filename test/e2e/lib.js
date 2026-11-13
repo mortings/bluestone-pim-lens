@@ -46,6 +46,26 @@ function startPim(state) {
       res.writeHead(200, { 'content-type': 'image/png' });
       return res.end(fs.readFileSync(file));
     }
+    // The sign-in service both PIMs share: its end-of-session address answers as the real one does,
+    // with a form that sends itself.
+    if (host.split(':')[0] === 'idp.test.bluestonepim.com') {
+      if (url.pathname === '/op/session/end' && req.method === 'GET') {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        return res.end('<!doctype html><title>Submitting Callback</title><form method="post" action="/op/session/end/confirm"><input type="hidden" name="logout" value="yes"></form><script>document.forms[0].submit()</script>');
+      }
+      if (url.pathname === '/op/session/end/confirm' && req.method === 'POST') {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        return res.end('<!doctype html><title>Signed out</title><h1>Signed out</h1>');
+      }
+      res.writeHead(404);
+      return res.end();
+    }
+    // The PIM app's sign-out address (state.keepSession: a PIM that does not let go).
+    if (url.pathname === '/logout') {
+      if (mock && !state.keepSession) mock.signOut();
+      res.writeHead(302, { location: '/login' });
+      return res.end();
+    }
     if (url.pathname === '/' || url.pathname.startsWith('/products') || url.pathname.startsWith('/login') || url.pathname.startsWith('/tasks')) {
       res.writeHead(200, { 'content-type': 'text/html' });
       return res.end(`<!doctype html><title>Stand-in PIM</title><h1>Stand-in PIM ${url.pathname}</h1>`);
@@ -111,7 +131,7 @@ async function launch(extDir, headless) {
     args: [
       ...(headless ? ['--headless=new'] : []),
       `--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`,
-      '--host-resolver-rules=MAP demo-ui.test.bluestonepim.com 127.0.0.1:8443, MAP app.test.bluestonepim.com 127.0.0.1:8443, MAP shop.example 127.0.0.1:8770, MAP img.shop.example 127.0.0.1:8770',
+      '--host-resolver-rules=MAP demo-ui.test.bluestonepim.com 127.0.0.1:8443, MAP app.test.bluestonepim.com 127.0.0.1:8443, MAP idp.test.bluestonepim.com 127.0.0.1:8443, MAP shop.example 127.0.0.1:8770, MAP img.shop.example 127.0.0.1:8770',
       '--ignore-certificate-errors', '--remote-debugging-port=9333', '--no-first-run', '--no-default-browser-check',
     ],
   });

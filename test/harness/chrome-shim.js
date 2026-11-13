@@ -31,6 +31,8 @@
       sendMessage: (msg) => {
         // Switching organisation: the stand-in PIM just changes its current one.
         if (msg && msg.type === 'bsi:switch-org') return Promise.resolve({ ok: window.__mock.switchOrg(msg.orgId) });
+        // Signing out: the stand-in PIM forgets its user.
+        if (msg && msg.type === 'lens:sign-out') return Promise.resolve({ ok: (window.__mock.signOut(), true) });
         window.parent.postMessage(msg, '*');
         return Promise.resolve({ ok: true });
       },

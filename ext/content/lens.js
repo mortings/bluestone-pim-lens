@@ -82,7 +82,7 @@
   const state = {
     on: false, page: null, result: null, phase: 'idle', message: '', mode: 'suggest',
     open: null, view: null, done: {}, details: {}, settings: false, orgs: null, assignees: null, confirmOrg: null, small: false, closed: 0,
-    images: null, imageNote: '',
+    images: null, imageNote: '', confirmOut: false, signedOut: false, busy: '',
   };
   let host = null;
   let rootEl = null;
@@ -291,7 +291,7 @@
   let scanCount = 0;
   async function scan(extra) {
     const mine = ++scanCount; // a later scan makes this one's answer out of date
-    Object.assign(state, { phase: 'loading', open: null, view: null, details: {}, message: '', images: null, imageNote: '', panelNote: '' });
+    Object.assign(state, { phase: 'loading', open: null, view: null, details: {}, message: '', images: null, imageNote: '', panelNote: '', signedOut: false, busy: '', confirmOut: false });
     // Another product: what was saved or suggested belongs to the previous one.
     if (extra && (extra.productId || extra.fresh || extra.query)) state.done = {};
     render();
@@ -713,13 +713,15 @@
     const add = (...parts) => body.append(...parts.flat(Infinity).filter((x) => x != null && x !== false));
 
     if (state.phase === 'loading') {
-      add(h('p', { class: 'muted' }, h('span', { class: 'spin' }), 'Reading the page and finding the product…'));
+      add(h('p', { class: 'muted' }, h('span', { class: 'spin' }), state.busy || 'Reading the page and finding the product…'));
     } else if (state.phase === 'auth') {
       // The PIMs the Lens may talk to (fixed in the extension, Test environment only).
       const hosts = (Array.isArray(r.hosts) ? r.hosts : []).filter((u) => /^https:\/\/[a-z0-9.-]+\.bluestonepim\.com$/.test(u));
       const short = (u) => u.replace('https://', '').replace('.bluestonepim.com', '');
       add(
-        h('p', {}, 'Sign in to Bluestone PIM first. The Lens uses your own PIM session, in the Test environment.'),
+        h('p', {}, state.signedOut
+          ? 'You are signed out of Bluestone PIM in this browser. Sign in again, as the same user or another one, then try again here.'
+          : 'Sign in to Bluestone PIM first. The Lens uses your own PIM session, in the Test environment.'),
         h('div', { class: 'row' },
           hosts.map((u) => h('a', { class: 'btn' + (u === r.base ? ' primary' : ''), href: u, target: '_blank', rel: 'noopener' }, `Open ${short(u)}`)),
           // Looks on every PIM above, whichever one you signed in to.
@@ -825,6 +827,7 @@
     state.settings = !state.settings;
     state.small = false;
     state.confirmOrg = null;
+    state.confirmOut = false;
     renderDock();
     if (state.settings && !state.assignees) {
       const a = await send('lens:assignees');
@@ -874,7 +877,38 @@
       h('label', {}, h('span', {}, 'PIM'), pim),
       h('label', {}, h('span', {}, 'Suggestions go to'), assigneeSelect()),
       h('div', { class: 'row' },
-        h('button', { type: 'button', class: 'link', onclick: () => { readPage(); scan(); } }, 'Read the page again')));
+        h('button', { type: 'button', class: 'link', onclick: () => { readPage(); scan(); } }, 'Read the page again')),
+      signOutRow(session));
+  }
+
+  /** Who is signed in, and a way out: the Lens uses the browser's PIM session, so this ends that. */
+  function signOutRow(session) {
+    if (state.confirmOut) {
+      return h('div', { class: 'confirm who' },
+        h('p', {}, 'Sign out of Bluestone PIM? Your open PIM tabs are signed out too. After that you can sign in as someone else.'),
+        h('div', { class: 'row' },
+          h('button', { type: 'button', class: 'btn primary', write: true, onclick: signOut }, 'Sign out'),
+          h('button', { type: 'button', class: 'btn', onclick: () => { state.confirmOut = false; renderDock(); } }, 'Cancel')));
+    }
+    return h('p', { class: 'muted small who' },
+      session.user ? `Signed in as ${clip(session.user, 40)}. ` : '',
+      h('button', { type: 'button', class: 'link', onclick: () => { state.confirmOut = true; state.confirmOrg = null; renderDock(); } }, 'Sign out'));
+  }
+
+  async function signOut() {
+    const mine = ++scanCount; // whatever is still being read belongs to the session that is ending
+    Object.assign(state, { confirmOut: false, settings: false, phase: 'loading', busy: 'Signing out of Bluestone PIM…', open: null, view: null });
+    render();
+    const r = await send('lens:sign-out');
+    if (!state.on || mine !== scanCount) return; // the page was read again meanwhile: that reading says where things stand
+    Object.assign(state, { busy: '', orgs: null, assignees: null });
+    if (r.ok) {
+      // Nothing from the PIM stays on the page once nobody is signed in.
+      Object.assign(state, { phase: 'auth', signedOut: true, result: { ok: false, state: 'auth', base: r.base, hosts: r.hosts }, done: {}, details: {}, images: null });
+    } else {
+      Object.assign(state, { phase: 'error', message: r.error || 'Could not sign out. Open the PIM and sign out there.' });
+    }
+    render();
   }
 
   function orgPicker(session) {
@@ -1470,6 +1504,7 @@
     .settings label { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 8px; align-items: start; }
     .settings label > span { color: var(--muted); padding-top: 4px; }
     .orgs, .confirm { display: grid; gap: 5px; }
+    .who { border-top: 1px solid var(--line); padding-top: 8px; margin: 0; }
     .list { display: grid; gap: 1px; max-height: 180px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; padding: 3px; }
     .list button { text-align: left; border: 0; background: none; border-radius: 4px; padding: 4px 6px; overflow-wrap: anywhere; }
     .list button:hover { background: var(--soft); }

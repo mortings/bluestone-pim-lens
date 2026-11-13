@@ -42,6 +42,7 @@
     matches: {}, // "<org>|<page address>" -> product id the user chose
     status: 'empty', // empty | loading | auth | error | notfound | pick | ready
     error: '',
+    user: '', // the signed-in user's name
     notice: '',
     identified: null, // { product, via, candidates, tried, fromSelection }
     loaded: null,
@@ -79,6 +80,7 @@
   /** Who is signed in, and to which organisation. Resets what belongs to the old one. */
   async function loadSession() {
     const me = await pim.me();
+    state.user = typeof me.name === 'string' ? me.name : '';
     if (!state.org || state.org.id !== me.organization) {
       state.org = { id: me.organization, name: me.organizationName || me.organization };
       state.contexts = null;
@@ -770,6 +772,48 @@
     btn.textContent = state.org ? state.org.name : 'Not signed in';
     btn.disabled = !state.org;
     btn.title = state.org ? 'Switch organisation' : '';
+    renderWho();
+  }
+
+  // ---- signing out ---------------------------------------------------------------------
+  // The panel uses the browser's PIM session, so signing out ends that session everywhere.
+
+  const leaving = { asking: false, busy: false, error: '' };
+
+  function renderWho() {
+    const row = $('who');
+    row.hidden = !state.org && !leaving.error;
+    row.textContent = '';
+    if (row.hidden) return;
+    if (leaving.busy) row.append(h('span', null, h('span', { class: 'spinner' }), 'Signing out of Bluestone PIM…'));
+    else if (leaving.asking) {
+      row.append(
+        h('span', null, 'Sign out of Bluestone PIM? Your open PIM tabs are signed out too.'),
+        h('button', { class: 'btn primary', type: 'button', onclick: signOut }, 'Sign out'),
+        h('button', { class: 'btn', type: 'button', onclick: () => { leaving.asking = false; renderWho(); } }, 'Cancel'));
+    } else {
+      if (leaving.error) row.append(h('span', { class: 'note bad' }, leaving.error));
+      if (state.org) {
+        row.append(
+          h('span', null, state.user ? `Signed in as ${state.user}.` : 'Signed in.'),
+          h('button', { class: 'link', type: 'button', onclick: () => { leaving.asking = true; leaving.error = ''; renderWho(); } }, 'Sign out'));
+      }
+    }
+  }
+
+  async function signOut() {
+    Object.assign(leaving, { asking: false, busy: true, error: '' });
+    renderWho();
+    const res = await chrome.runtime.sendMessage({ type: 'lens:sign-out' }).catch(() => null);
+    leaving.busy = false;
+    if (res && res.ok) {
+      state.orgs = null;
+      state.notice = 'You are signed out of Bluestone PIM in this browser. Sign in again, as the same user or another one.';
+      fail({ kind: 'auth' });
+    } else {
+      leaving.error = (res && res.error) || 'Could not sign out. Open the PIM and sign out there.';
+      renderWho();
+    }
   }
 
   function openOrgPicker(open) {

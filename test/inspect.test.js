@@ -780,3 +780,88 @@ test('the page\'s address comes from Chrome, not from the message; odd text and 
   assert.equal((await ask('1200')).display, '1200 gr');
   assert.equal(mock.calls.length, 0);
 });
+
+// ---- signing out ------------------------------------------------------------
+
+const { HOSTS } = require('../ext/src/service.js');
+
+/** A service on two stand-in PIMs, with a "browser" that signs out of the PIMs it is sent to. */
+function lensOnTwoPims(options) {
+  const opt = options || {};
+  const pims = { [HOSTS[0]]: createMock(), [HOSTS[1]]: createMock({ signedOut: !opt.bothSignedIn }) };
+  const store = {};
+  const storage = {
+    get: async (defaults) => Object.fromEntries(Object.entries(defaults).map(([k, v]) => [k, k in store ? store[k] : v])),
+    set: async (obj) => void Object.assign(store, JSON.parse(JSON.stringify(obj))),
+  };
+  const visited = [];
+  let clock = Date.UTC(2026, 10, 13, 9, 0);
+  const deps = {
+    storage, now: () => clock,
+    transport: (base) => (opt.unreachableAfter && visited.length ? async () => { throw Object.assign(new Error('Could not reach Bluestone PIM.'), { kind: 'network' }); } : pims[base].request),
+    switchOrg: async () => ({ ok: false }),
+    signOut: async (hosts, stillSignedIn) => {
+      visited.push(...hosts);
+      if (opt.browserFails) throw new Error('no tab');
+      if (!opt.pimKeepsSession) hosts.forEach((h) => pims[h].signOut());
+      const left = await stillSignedIn();
+      return left ? { ok: false, needsUser: true, base: left } : { ok: true };
+    },
+  };
+  if (opt.noBrowser) delete deps.signOut;
+  const service = createService(deps);
+  return { pims, visited, store, send: client(service), tick: (ms) => (clock += ms) };
+}
+
+test('signing out ends the PIM session, and the next user is the one the Lens works as', async () => {
+  const { pims, visited, send } = lensOnTwoPims();
+  const before = await send('lens:scan', { page: bookPage });
+  assert.equal(before.state, 'ready');
+  assert.equal(before.session.user, 'Anna Berg');
+
+  const out = await send('lens:sign-out');
+  assert.deepEqual([out.ok, out.base], [true, HOSTS[0]]);
+  assert.deepEqual(out.hosts, HOSTS);
+  // Only the PIM somebody was signed in to is sent to its sign-out address.
+  assert.deepEqual(visited, [HOSTS[0]]);
+  // Nothing is answered from memory afterwards: not the session, not a product that was loaded.
+  const after = await send('lens:scan', { page: bookPage });
+  assert.deepEqual([after.ok, after.state], [false, 'auth']);
+  assert.equal((await send('lens:details', { productId: before.product.id, key: before.items[0].key })).ok, false);
+
+  // Someone else signs in: the Lens is that user, at once.
+  pims[HOSTS[0]].signIn({ id: 'u-bo', name: 'Bo Lind' });
+  const next = await send('lens:scan', { page: bookPage });
+  assert.equal(next.state, 'ready');
+  assert.equal(next.session.user, 'Bo Lind');
+});
+
+test('signing out covers both Test PIMs when the user is signed in to both', async () => {
+  const { visited, send } = lensOnTwoPims({ bothSignedIn: true });
+  assert.equal((await send('lens:sign-out')).ok, true);
+  assert.deepEqual(visited, HOSTS);
+  // "Try again" looks on every PIM: nobody is signed in on either.
+  assert.equal((await send('lens:scan', { page: bookPage, anyHost: true })).state, 'auth');
+});
+
+test('signing out is never reported as done unless the PIM says nobody is signed in', async () => {
+  // The PIM keeps its session whatever the browser did.
+  const kept = lensOnTwoPims({ pimKeepsSession: true });
+  const r = await kept.send('lens:sign-out');
+  assert.deepEqual([r.ok, r.needsUser, r.base], [false, true, HOSTS[0]]);
+  assert.match(r.error, /did not sign you out/);
+  assert.equal((await kept.send('lens:scan', { page: bookPage })).state, 'ready');
+
+  // The PIM cannot be asked afterwards: not known, so not claimed.
+  const dark = lensOnTwoPims({ unreachableAfter: true });
+  const d = await dark.send('lens:sign-out');
+  assert.equal(d.ok, false);
+  assert.match(d.error, /could not be reached/);
+
+  // The browser could not do it, or there is no browser to do it with.
+  for (const options of [{ browserFails: true }, { noBrowser: true }]) {
+    const x = await lensOnTwoPims(options).send('lens:sign-out');
+    assert.equal(x.ok, false);
+    assert.match(x.error, /^Could not sign out\. Open the PIM and sign out there\.$/);
+  }
+});

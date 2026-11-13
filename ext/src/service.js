@@ -739,6 +739,43 @@
       return s.org.id === orgId ? { ok: true, org: s.org } : { ok: false, error: 'The PIM stayed in the same organisation.' };
     }
 
+    /**
+     * Ends the browser's PIM session, so that someone else can sign in. The Lens has
+     * no session of its own. Both Test PIMs are signed out of (they share one sign-in),
+     * and it counts as done only when the PIM itself says nobody is signed in.
+     */
+    async function signOut() {
+      const base = await baseUrl();
+      if (!deps.signOut) return { ok: false, base, error: 'Could not sign out. Open the PIM and sign out there.' };
+      // true or false, or null when the PIM could not be asked.
+      const signedIn = async (host) => {
+        try {
+          await P.createPim(deps.transport(host)).me();
+          return true;
+        } catch (e) {
+          return e && e.kind === 'auth' ? false : null;
+        }
+      };
+      const before = await Promise.all(HOSTS.map(signedIn));
+      let after = [];
+      let r = null;
+      try {
+        r = await deps.signOut(HOSTS.filter((h, i) => before[i] !== false), async () => {
+          after = await Promise.all(HOSTS.map(signedIn));
+          return HOSTS.find((h, i) => after[i] === true) || null;
+        });
+      } catch (e) {
+        r = null; // the browser could not do it: said below, in words a person can use
+      }
+      reset();
+      if (r && r.ok) {
+        if (after[HOSTS.indexOf(base)] !== false) return { ok: false, base, error: 'Bluestone PIM could not be reached to check that you are signed out. Open the PIM to see.' };
+        return { ok: true, base, hosts: HOSTS };
+      }
+      if (r && r.needsUser) return { ok: false, needsUser: true, base: HOSTS.includes(r.base) ? r.base : base, error: 'The PIM did not sign you out. It is open in a tab now: click your name there, then Sign out.' };
+      return { ok: false, base, error: 'Could not sign out. Open the PIM and sign out there.' };
+    }
+
     async function settings(msg) {
       if (msg.base && HOSTS.includes(msg.base)) {
         await set('bsi:base', msg.base);
@@ -770,7 +807,7 @@
     const routes = {
       'lens:scan': scan, 'lens:images': images, 'lens:details': details, 'lens:preview': preview, 'lens:apply': apply,
       'lens:assignees': assignees, 'lens:assignee': setAssignee, 'lens:suggest': suggest, 'lens:facts': factList, 'lens:link': link,
-      'lens:orgs': orgs, 'lens:switch-org': switchOrg, 'lens:settings': settings, 'lens:prefs': prefs,
+      'lens:orgs': orgs, 'lens:switch-org': switchOrg, 'lens:sign-out': signOut, 'lens:settings': settings, 'lens:prefs': prefs,
     };
     const routeOf = (type) => (typeof type === 'string' ? own(routes, type) : undefined);
 

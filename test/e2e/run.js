@@ -302,11 +302,54 @@ async function pictures({ lens, toggle }) {
   ok('the card shows the page\'s picture beside the PIM\'s', /Fri, front cover · 600 × 900 px/.test(card) && thumbs.length > 0);
 }
 
+async function signingOut({ lens, context, state, mock, toggle }) {
+  const settings = (n, tx, a) => n.nodeName === 'BUTTON' && a['aria-label'] === 'Settings';
+  const pimTabs = () => context.pages().filter((p) => /bluestonepim\.com/.test(p.url()));
+  await toggle();
+  await lens.waitFor(/from the PIM/, 12000);
+  await lens.click(settings);
+  let t = await lens.waitFor(/Signed in as/, 5000);
+  ok('settings say who is signed in', /Signed in as Anna Berg\./.test(t));
+
+  await lens.click(lens.button('Sign out'));
+  t = await lens.waitFor(/Sign out of Bluestone PIM\?/, 5000);
+  ok('signing out asks first, and says the PIM tabs are signed out too', /open PIM tabs are signed out too/.test(t));
+  await sleep(ARMED);
+  const tabsBefore = context.pages().length;
+  await lens.click(lens.button('Sign out'));
+  t = await lens.waitFor(/You are signed out of Bluestone PIM/, 25000);
+  const asked = state.requests.filter((r) => /\/logout$|\/op\/session\/end/.test(r));
+  ok('signing out goes to the PIM\'s sign-out address, then ends the shared sign-in',
+    asked.join(' > ') === 'GET demo-ui.test.bluestonepim.com/logout > GET idp.test.bluestonepim.com/op/session/end > POST idp.test.bluestonepim.com/op/session/end/confirm', asked.join(' > '));
+  ok('signed out: nothing from the PIM is left on the page, and the Lens offers to sign in', (await lens.all(pill())).length === 0 && /Open demo-ui\.test/.test(t) && /Try again/.test(t));
+  await sleep(500);
+  ok('the tab used for signing out is closed again', context.pages().length === tabsBefore && pimTabs().length === 0, `${context.pages().length} tabs, ${tabsBefore} before`);
+
+  mock.signIn({ id: 'u-bo', name: 'Bo Lind' }); // someone else signs in to the PIM
+  await lens.click(lens.button('Try again'));
+  await lens.waitFor(/from the PIM/, 12000);
+  await lens.click(settings);
+  t = await lens.waitFor(/Signed in as/, 5000);
+  ok('after another user signs in, the Lens works as that user', /Signed in as Bo Lind\./.test(t));
+
+  // A PIM that keeps its session: the Lens does not claim otherwise.
+  state.keepSession = true;
+  await lens.click(lens.button('Sign out'));
+  await lens.waitFor(/Sign out of Bluestone PIM\?/, 5000);
+  await sleep(ARMED);
+  await lens.click(lens.button('Sign out'));
+  t = await lens.waitFor(/did not sign you out/, 25000);
+  await sleep(800);
+  ok('a PIM that keeps the session: the Lens says so and leaves the PIM open to sign out there',
+    /click your name there, then Sign out/.test(t) && pimTabs().some((p) => p.url().startsWith('https://demo-ui.test.bluestonepim.com/')), pimTabs().map((p) => p.url()).join(', '));
+}
+
 (async () => {
   console.log(`Browser: ${L.CHROME}`);
   await scenario('Everyday use', {}, everydayUse);
   await scenario('Worker restarts and page changes', {}, restartsAndPageChanges);
   await scenario('Signing in, and odd places', { signedOut: true, page: 'book-drawer.html' }, signInAndOddPlaces);
+  await scenario('Signing out, and in as someone else', {}, signingOut);
   await scenario('Pictures, once the image host is allowed', { allowHosts: ['http://img.shop.example/*'] }, pictures);
   const failed = results.filter((r) => !r).length;
   console.log(`\n${results.length - failed} passed, ${failed} failed`);

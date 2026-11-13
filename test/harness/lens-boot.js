@@ -40,7 +40,14 @@ const LENS_ROOT = new URL('../../', document.currentScript.src).href;
       return { error: 'failed' };
     }
   };
-  const service = BSI.service.createService({ storage, transport: () => mock.request, switchOrg: async (base, id) => ({ ok: mock.switchOrg(id) }), readImage });
+  const service = BSI.service.createService({ storage, transport: () => mock.request, switchOrg: async (base, id) => ({ ok: mock.switchOrg(id) }),
+    // Signing out: the stand-in PIM forgets its user (?keepsession: it does not, as a PIM that refuses would).
+    signOut: async (hosts, stillSignedIn) => {
+      if (!params.has('keepsession')) mock.signOut();
+      const left = await stillSignedIn();
+      return left ? { ok: false, needsUser: true, base: left } : { ok: true };
+    },
+    readImage });
   const listeners = [];
   window.chrome = Object.assign(window.chrome || {}, {
     runtime: {

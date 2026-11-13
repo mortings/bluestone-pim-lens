@@ -141,7 +141,7 @@
   }
 
   /**
-   * options.signedOut: every call fails as "not signed in".
+   * options.signedOut: every call fails as "not signed in". options.user: { id, name } of who is signed in.
    * Returns { request, db, calls } where calls lists every write that was made.
    */
   function createMock(options) {
@@ -152,7 +152,10 @@
     let currentOrg = 'org-nordic';
     let db = full;
     const calls = [];
-    const opts = options || {};
+    const opts = Object.assign({}, options);
+    // Signing out and in again (as another user, when one is given), as a person does in the PIM.
+    const signOut = () => void (opts.signedOut = true);
+    const signIn = (user) => void Object.assign(opts, { signedOut: false }, user ? { user } : {});
     const tokens = (t) => String(t || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
     function switchOrg(id) {
       if (!orgs.some((o) => o.id === id)) return false;
@@ -180,7 +183,7 @@
       if (service === 'auth' && path === '/me') {
         const org = orgs.find((o) => o.id === currentOrg);
         const permissions = { READ: ['TASKS'], ADD: opts.noTasks ? [] : ['TASKS'], UPDATE: opts.readOnlyUser ? ['TASKS'] : ['TASKS', 'PRODUCTS', 'ATTRIBUTES'] };
-        return { ok: true, status: 200, data: { id: 'u-anna', name: 'Anna Berg', organization: org.id, organizationName: org.name, permissions } };
+        return { ok: true, status: 200, data: { id: (opts.user && opts.user.id) || 'u-anna', name: (opts.user && opts.user.name) || 'Anna Berg', organization: org.id, organizationName: org.name, permissions } };
       }
       if (service === 'idp' && path === '/organizations') return { ok: true, status: 200, data: orgs.map((o) => Object.assign({ mfa: { enabled: false } }, o)) };
       if (service === 'search' && path === '/find') {
@@ -304,7 +307,7 @@
       fail('http', 404, `Mock PIM has no route for ${m} ${service}${path}`);
     }
 
-    return { request, calls, switchOrg, orgs, get db() { return db; } };
+    return { request, calls, switchOrg, signOut, signIn, orgs, get db() { return db; } };
   }
 
   const api = { createMock };

@@ -4,7 +4,7 @@
 
 A Chrome extension that turns any product page into a view of Bluestone PIM. Click the toolbar button on a product page: the Lens finds the product in the PIM and puts a small pill next to each fact on the page, saying whether the value comes from the PIM. Click a pill to see where the value is kept, and change it or suggest a change, without leaving the page.
 
-Version 0.5.0.
+Version 0.6.0.
 
 ![Pills and marked values on a product page](docs/lens-pills.jpg)
 
@@ -26,6 +26,8 @@ Pills are solid so they stand out on any page, and the value itself is marked in
 Pills are placed on the label and value pairs the page shows (specification tables and lists), on the product's heading, and on longer texts that match a text in the PIM, such as the description. A fact shown twice on a page gets a pill in both places.
 
 A small box in the bottom-right corner shows the product that was found, how it was found, the counts, the mode switch and the settings: organisation, language, which PIM, and who gets suggestions.
+
+The settings also say who is signed in, with **Sign out** beside it. The Lens has no sign-in of its own: it works with the PIM session of your browser. Signing out therefore signs you out of the Test PIM in the whole browser, open PIM tabs included. Sign in to the PIM again, as the same user or another one, and choose **Try again** in the Lens. The side panel has the same thing at the bottom.
 
 ## Pictures
 
@@ -98,10 +100,10 @@ When the Lens gets an attribute wrong or cannot find it, choose the right one in
 What the extension can reach, and what it does with it:
 
 - **Your PIM session, and nothing else.** The extension has no keys, tokens or passwords of its own and stores none. Its background worker calls the PIM web app's own API with the session of the browser you are signed in with, so every read and write runs with your role's permissions and shows up in the PIM's history as you.
-- **Only two addresses.** The session is sent to `app.test.bluestonepim.com` and `demo-ui.test.bluestonepim.com`, fixed in the extension. No other server is contacted: no analytics, no error reporting, nothing to the extension's author.
+- **Only two addresses.** The session is sent to `app.test.bluestonepim.com` and `demo-ui.test.bluestonepim.com`, fixed in the extension. No other server is contacted: no analytics, no error reporting, nothing to the extension's author. **Sign out** opens two addresses in a background tab and closes it again: the PIM's own sign-out address and the end-of-session address of the Test sign-in service (`idp.test.bluestonepim.com`). The extension itself sends nothing to the sign-in service.
 - **A page is read only when you ask.** The extension has no standing access to the sites you visit. A page is read after you click the button or the menu item (Chrome's `activeTab` permission), and only that page. It does not run in incognito windows.
 - **The shop page is kept from reading the Lens.** Everything the Lens draws sits in a closed part of the page that the page's own scripts cannot open, and its text is drawn in a way that a script's text search or selection does not reach. The page's own elements are not changed.
-- **The shop page is kept from steering the Lens.** The Lens acts only on real clicks and key presses, never on ones a script makes. A button that changes something in the PIM (Save, Send suggestion, Switch organisation) works only after it has been fully showing, with nothing drawn over it, for half a second, so a page cannot cover the card and guide a click onto it.
+- **The shop page is kept from steering the Lens.** The Lens acts only on real clicks and key presses, never on ones a script makes. A button that changes something in the PIM (Save, Send suggestion, Switch organisation, Sign out) works only after it has been fully showing, with nothing drawn over it, for half a second, so a page cannot cover the card and guide a click onto it.
 - **What a page says is treated as untrusted.** Text read from a page is only ever shown as text. Before it is used it is cut to a sensible length, and in a task it stays on its own line, so a page cannot write the rest of a task for you. The page's address is taken from Chrome, not from the page.
 - **Nothing is saved without a review.** Edit shows what will change, on which product, in which language and organisation, and how many products inherit it, before you save. Suggest never changes the product.
 - **A save goes where you read.** Every save and suggestion is tied to the PIM, organisation and language the page was read with. If your session has moved to another organisation since, the Lens refuses and asks you to read the page again.
@@ -124,16 +126,17 @@ Found a security problem? See [SECURITY.md](SECURITY.md).
 
 | | |
 |---|---|
-| 47 automated tests (`npm test`) | Pass. Matching, finding the product, Edit (review and save), Suggest (task, assignee, product on the task), roles, label links, organisation switching, pictures, a save staying in the language and organisation the page was read with, and how the service handles odd or hostile messages, all against a stand-in PIM. |
-| 38 checks in a real browser (`npm run test:browser`) | Pass, in Chromium 147. The extension is loaded unchanged and used with real clicks against a stand-in PIM at the PIM's own addresses: pills, cards, a suggestion, a save, the side panel request, pictures compared in the background worker, facts in a modal drawer, a shop that changes product without reloading, signed out, the background worker stopping and starting, and a PIM that does not answer. Also what a page can do to it: a page script cannot open the Lens, find or select its text, click its buttons, or get a covered button to act. |
+| 50 automated tests (`npm test`) | Pass. Matching, finding the product, Edit (review and save), Suggest (task, assignee, product on the task), roles, label links, organisation switching, signing out (reported as done only when the PIM says nobody is signed in), pictures, a save staying in the language and organisation the page was read with, and how the service handles odd or hostile messages, all against a stand-in PIM. |
+| 46 checks in a real browser (`npm run test:browser`) | Pass, in Chromium 147. The extension is loaded unchanged and used with real clicks against a stand-in PIM at the PIM's own addresses: pills, cards, a suggestion, a save, the side panel request, pictures compared in the background worker, facts in a modal drawer, a shop that changes product without reloading, signed out, signing out and another user signing in, a PIM that keeps its session, the background worker stopping and starting, and a PIM that does not answer. Also what a page can do to it: a page script cannot open the Lens, find or select its text, click its buttons, or get a covered button to act. |
 | An independent code review | A second reviewer read all the code for security and reliability problems after the first round of fixes. What it found is fixed or listed above under "What a hostile page could still do". |
 | A real Test organisation, read only | Finding books from a real shop's page data, the comparison (17 of 17 facts confirmed on one book; real differences flagged on others; empty attributes reported as empty), roles, the list of people for suggestions, history and the save review. |
 | A real Test organisation, one write | Suggest mode created one real task: the PIM answered with the new task's id, the product was put on it, and the task read back with the right title, assignee, due date, language and description. The product itself was unchanged. |
-| **Not verified** | Against a real PIM: saving from Edit mode, the picture comparison (the list of a product's pictures and the PIM's thumbnail address follow the documentation only), and switching organisation. In Chrome itself: answering Chrome's permission question for an image host (the test only shows that the question is reached), and the side panel as you see it (the test shows that Chrome accepts the request to open it). |
+| **Not verified** | Against a real PIM: saving from Edit mode, the picture comparison (the list of a product's pictures and the PIM's thumbnail address follow the documentation only), switching organisation, and signing out. For signing out, the end-of-session address is the one the Test sign-in service publishes, but the PIM app's own sign-out address (`/logout`) is an assumption. If it is wrong and the PIM keeps its session, the Lens says so and opens the PIM for you to sign out there; it does not report that you are signed out. In Chrome itself: answering Chrome's permission question for an image host (the test only shows that the question is reached), and the side panel as you see it (the test shows that Chrome accepts the request to open it). |
 
 ## Known limits
 
 - Test environment only. The production PIM is left out on purpose while this is a prototype.
+- Sign out ends your PIM session in the whole browser, not only in the Lens, and covers both Test PIMs.
 - A shop page has to show the product as label and value pairs for the Lens to have something to mark. Pages inside frames are not read.
 - Facts that are not label and value pairs (subject tags, the author line under the title, prices) get no pill.
 - Edit handles text, whole numbers, decimals and single-select attributes. Other kinds can be suggested, or opened in the PIM.
@@ -149,7 +152,7 @@ Found a security problem? See [SECURITY.md](SECURITY.md).
 There is no build step: the `ext` folder is the extension.
 
 ```
-npm test                 # 47 unit tests, no dependencies
+npm test                 # 50 unit tests, no dependencies
 npm install
 npx playwright-core install chromium
 npm run test:browser     # the extension in a real Chromium, against a stand-in PIM
@@ -173,7 +176,7 @@ A simulator runs the on-page view and the side panel in an ordinary browser tab,
 | `ext/src/page-extract.js` | Reads identifiers, label and value pairs, the heading and longer texts from a page. |
 | `ext/src/match.js`, `trace.js`, `inspect.js`, `pim.js` | Matching, inheritance, finding the product, the PIM client. |
 | `ext/src/imagehash.js` | Picture fingerprints and their comparison. |
-| `ext/background.js` | Toolbar button, right-click menu, organisation switching. |
+| `ext/background.js` | Toolbar button, right-click menu, organisation switching, signing out. |
 | `ext/panel/` | The side panel: the detail view. |
 | `test/` | Tests, the stand-in PIM (`mock-pim.js`), test shop pages, the simulator (`harness/`) and the browser test (`e2e/`). |
 

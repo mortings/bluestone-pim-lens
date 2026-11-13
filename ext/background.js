@@ -107,6 +107,73 @@ async function switchOrganisation(base, orgId) {
   });
 }
 
+// ---- signing out ------------------------------------------------------------
+// The Lens has no sign-in of its own: it uses the browser's PIM session. Signing
+// out therefore ends that session for the whole browser. A background tab goes to
+// the PIM app's sign-out address and then to the sign-in service's end-of-session
+// address (the end_session_endpoint its discovery document names), so that opening
+// the PIM afterwards asks who you are instead of letting the same user back in.
+// Whether it worked is not taken from those pages: the PIM is asked afterwards.
+const SIGN_IN_SERVICE_END = 'https://idp.test.bluestonepim.com/op/session/end';
+
+/** Sends a tab to an address. Resolves once it has stopped loading for a moment (redirects included), or after `limit` ms. */
+function visit(tabId, url, limit) {
+  return new Promise((resolve) => {
+    let done = false;
+    let quiet = null;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onRemoved.removeListener(onRemoved);
+      clearTimeout(quiet);
+      clearTimeout(timer);
+      resolve();
+    };
+    const onUpdated = (id, info) => {
+      if (id !== tabId || !info.status) return;
+      clearTimeout(quiet);
+      if (info.status === 'complete') quiet = setTimeout(finish, 1200);
+    };
+    const onRemoved = (id) => id === tabId && finish();
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.onRemoved.addListener(onRemoved);
+    const timer = setTimeout(finish, limit);
+    chrome.tabs.update(tabId, { url }).catch(finish);
+  });
+}
+
+/**
+ * hosts: the PIMs somebody is signed in to. stillSignedIn(): the first PIM whose
+ * session is alive afterwards, or null; only that decides whether it worked.
+ */
+let signingOut = null;
+function signOut(hosts, stillSignedIn) {
+  // One at a time, however often it is asked for.
+  if (!signingOut) signingOut = endSession(hosts, stillSignedIn).finally(() => { signingOut = null; });
+  return signingOut;
+}
+
+async function endSession(hosts, stillSignedIn) {
+  const tab = await chrome.tabs.create({ url: 'about:blank', active: false });
+  try {
+    for (const base of hosts) if (PIM_HOSTS.includes(base)) await visit(tab.id, `${base}/logout`, 12000);
+    await visit(tab.id, SIGN_IN_SERVICE_END, 12000);
+    const left = await stillSignedIn();
+    if (!left) {
+      chrome.tabs.remove(tab.id).catch(() => {});
+      return { ok: true };
+    }
+    // The PIM kept its session: the user signs out in the PIM itself, in this tab.
+    const base = PIM_HOSTS.includes(left) ? left : PIM_HOSTS[0];
+    await chrome.tabs.update(tab.id, { url: base, active: true }).catch(() => chrome.tabs.create({ url: base }).catch(() => {}));
+    return { ok: false, needsUser: true, base };
+  } catch (e) {
+    chrome.tabs.remove(tab.id).catch(() => {});
+    return { ok: false };
+  }
+}
+
 // ---- pictures ---------------------------------------------------------------
 // A shop serves its pictures from its own image host. The extension may read them
 // only after the user allows that host (asked once, from the on-page box or the
@@ -194,6 +261,7 @@ const service = BSI.service.createService({
   storage: { get: (defaults) => chrome.storage.local.get(defaults), set: (values) => chrome.storage.local.set(values) },
   transport: (base) => BSI.pim.sessionTransport(base),
   switchOrg: switchOrganisation,
+  signOut,
   readImage,
 });
 
