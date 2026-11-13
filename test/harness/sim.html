@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Bluestone PIM Lens: side panel simulator</title>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    body { display: grid; grid-template-rows: auto 1fr; font: 13px -apple-system, "Segoe UI", Arial, sans-serif; background: #e9eaee; }
+    .bar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: #272d3b; color: #fff; }
+    .bar button { font: inherit; padding: 5px 10px; border-radius: 6px; border: 1px solid #5b6275; background: #3b4254; color: #fff; cursor: pointer; }
+    .bar span { opacity: .7; margin-left: auto; }
+    .split { display: grid; grid-template-columns: 1fr 390px; min-height: 0; }
+    iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+    #panel { border-left: 1px solid #c9ccd6; }
+  </style>
+</head>
+<body>
+  <!-- Simulates Chrome: the demo shop on the left, the extension's real side panel
+       on the right, backed by a stand-in PIM. The two buttons stand in for the
+       right-click menu item and the toolbar icon. -->
+  <div class="bar">
+    <button id="trace" type="button">Right-click ▸ Open in the side panel instead</button>
+    <button id="inspect" type="button">Toolbar icon (inspect page)</button>
+    <span>Simulator: demo shop + stand-in PIM. Select a fact in the shop first.</span>
+  </div>
+  <div class="split">
+    <iframe id="shop" src="../shop/index.html" title="Demo shop"></iframe>
+    <iframe id="panel" src="panel-host.html" title="Side panel"></iframe>
+  </div>
+  <script>
+    const shop = document.getElementById('shop');
+    const panel = document.getElementById('panel');
+    const params = new URLSearchParams(location.search);
+    if (params.has('signedOut')) panel.src = 'panel-host.html?signedOut=1';
+    if (params.get('shop')) shop.src = params.get('shop');
+
+    async function capture(keepSelection) {
+      const win = shop.contentWindow;
+      if (!win.bsiExtractPage) {
+        await new Promise((ok, fail) => {
+          const s = win.document.createElement('script');
+          s.src = new URL('../../ext/src/page-extract.js', location.href).href + '?v=' + Date.now();
+          s.onload = ok;
+          s.onerror = fail;
+          win.document.head.appendChild(s);
+        });
+      }
+      if (!keepSelection) win.getSelection().removeAllRanges();
+      panel.contentWindow.__setCapture({ tabId: 1, at: Date.now(), page: win.bsiExtractPage() });
+    }
+    document.getElementById('trace').addEventListener('click', () => capture(true));
+    document.getElementById('inspect').addEventListener('click', () => capture(false));
+    window.addEventListener('message', (e) => e.data && e.data.type === 'bsi:recapture' && capture(true));
+    window.__sim = { capture, shop, panel };
+  </script>
+</body>
+</html>

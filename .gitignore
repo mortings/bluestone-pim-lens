@@ -1,0 +1,6 @@
+.DS_Store
+node_modules/
+dist/
+test/e2e/.work/
+# Demo pages with a product of one particular demo organisation: kept locally, not published.
+ext/demo/

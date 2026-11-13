@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Bluestone PIM Lens",
+  "version": "0.5.0",
+  "description": "Unofficial Labs prototype. See which facts on a product page come from Bluestone PIM, and change them or suggest a change there.",
+  "minimum_chrome_version": "116",
+  "incognito": "not_allowed",
+  "permissions": [
+    "contextMenus",
+    "sidePanel",
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://demo-ui.test.bluestonepim.com/*",
+    "https://app.test.bluestonepim.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "panel/panel.html"
+  },
+  "action": {
+    "default_title": "Bluestone PIM Lens: show PIM data on this page",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ]
+}

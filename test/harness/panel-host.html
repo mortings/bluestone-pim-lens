@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Panel host</title></head>
+<body>
+<script>
+  // Loads the real side panel (ext/panel/panel.html) with stand-ins for chrome.*
+  // and a stand-in PIM. ?signedOut=1 simulates not being signed in.
+  (async () => {
+    const v = Date.now();
+    const signedOut = new URLSearchParams(location.search).has('signedOut');
+    let html = await fetch(new URL('../../ext/panel/panel.html', location.href), { cache: 'no-store' }).then((r) => r.text());
+    html = html.replace(/(src|href)="([^"]+\.(?:js|css|png))"/g, (m, a, u) => `${a}="${u}?v=${v}"`);
+    const inject =
+      `<base href="${new URL('../../ext/panel/', location.href).href}">` +
+      `<script src="${new URL('chrome-shim.js', location.href).href}?v=${v}"><\/script>` +
+      `<script src="${new URL('../mock-pim.js', location.href).href}?v=${v}"><\/script>` +
+      `<script>window.__mock = BSI.mock.createMock({ signedOut: ${signedOut} }); window.BSI_TEST_TRANSPORT = window.__mock.request;<\/script>`;
+    document.open();
+    document.write(html.replace('<head>', '<head>' + inject));
+    document.close();
+  })();
+</script>
+</body>
+</html>

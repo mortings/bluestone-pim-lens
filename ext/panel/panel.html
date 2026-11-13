@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bluestone PIM Lens: side panel</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <header class="top">
+    <img src="../icons/icon48.png" alt="" width="22" height="22">
+    <h1>Bluestone PIM Lens</h1>
+    <span class="tag">Side panel</span>
+    <span class="env" id="env" title="Which PIM this panel talks to">Test</span>
+  </header>
+
+  <main id="app" aria-live="polite"></main>
+
+  <footer class="foot">
+    <div id="orgpop" class="orgpop" hidden></div>
+    <div class="orgrow">
+      <span id="orglabel">Organisation</span>
+      <button type="button" id="org" class="orgbtn" aria-haspopup="dialog" aria-expanded="false" aria-labelledby="orglabel org">…</button>
+    </div>
+    <label>Language
+      <select id="context" disabled></select>
+    </label>
+    <label>PIM
+      <select id="base">
+        <option value="https://demo-ui.test.bluestonepim.com">demo-ui.test</option>
+        <option value="https://app.test.bluestonepim.com">app.test</option>
+      </select>
+    </label>
+    <button type="button" class="link" id="recapture">Read page again</button>
+  </footer>
+
+  <script src="../src/match.js"></script>
+  <script src="../src/trace.js"></script>
+  <script src="../src/pim.js"></script>
+  <script src="../src/inspect.js"></script>
+  <script src="panel.js"></script>
+</body>
+</html>

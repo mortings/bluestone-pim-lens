@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="nb">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fri | Lea Ypi | Bokhandelen (demo, specification in a drawer)</title>
+  <!-- A made-up Norwegian bookshop page for trying the Lens. Its labels are in
+       Norwegian while the stand-in PIM (../mock-pim.js) names its attributes in
+       English. "Vekt" is deliberately different from the PIM, and "Tykkelse" is
+       not in the PIM at all. -->
+  <script type="application/ld+json">
+  { "@context": "https://schema.org", "@type": ["Product", "Book"], "name": "Fri", "image": ["img/shop-cover-small.png"], "sku": "9788205593619", "isbn": "9788205593619" }
+  </script>
+  <style>
+    :root { --ink: #1b1b1b; --muted: #6a6a6a; --line: #e4e0d8; --accent: #b3261e; --bg: #fbf9f4; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 16px/1.55 Georgia, "Times New Roman", serif; color: var(--ink); background: var(--bg); }
+    header { padding: 14px 24px; border-bottom: 1px solid var(--line); background: #fff; font: 700 15px -apple-system, "Segoe UI", Arial, sans-serif; letter-spacing: .08em; }
+    main { max-width: 900px; margin: 0 auto; padding: 24px; display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 32px; }
+    .cover { aspect-ratio: 2 / 3; border-radius: 4px; background: linear-gradient(150deg, #d9482b, #8f1d14); color: #fff; display: grid; place-items: center; font: 700 28px Georgia, serif; }
+    .coverimg { display: block; width: 100%; height: auto; border-radius: 4px; }
+    .coverimg.second { margin-top: 12px; }
+    h1 { font-size: 30px; line-height: 1.15; margin: 0 0 4px; }
+    .by { color: var(--muted); font: 14px -apple-system, Arial, sans-serif; margin: 0 0 14px; }
+    .price { font: 700 22px -apple-system, Arial, sans-serif; margin: 14px 0 8px; }
+    .buy { font: 600 14px -apple-system, Arial, sans-serif; background: var(--accent); color: #fff; border: 0; border-radius: 4px; padding: 11px 22px; }
+    h2 { font: 700 13px -apple-system, Arial, sans-serif; text-transform: uppercase; letter-spacing: .08em; margin: 28px 0 8px; }
+    details { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin-top: 24px; }
+    summary { cursor: pointer; padding: 12px 0; font: 700 13px -apple-system, Arial, sans-serif; text-transform: uppercase; letter-spacing: .08em; }
+    dl { margin: 0 0 14px; display: grid; grid-template-columns: 160px 1fr; font: 14px -apple-system, "Segoe UI", Arial, sans-serif; }
+    dt, dd { margin: 0; padding: 7px 0; border-top: 1px solid var(--line); }
+    dt { color: var(--muted); }
+    .open { display: block; width: 100%; text-align: left; margin-top: 20px; padding: 14px 0; background: none; border: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); font: 700 13px -apple-system, Arial, sans-serif; text-transform: uppercase; letter-spacing: .08em; cursor: pointer; }
+    .lang { font: 14px -apple-system, Arial, sans-serif; }
+    dialog { position: fixed; inset: 0 0 0 auto; margin: 0; height: 100vh; max-height: 100vh; width: min(440px, 100vw); border: 0; padding: 0 16px 16px; overflow: auto; background: #fff; }
+    dialog::backdrop { background: rgba(0, 0, 0, .45); }
+    .drawer-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 0; font: 15px -apple-system, Arial, sans-serif; }
+    .drawer-head button { border: 0; background: none; font-size: 22px; cursor: pointer; }
+    dialog dl { grid-template-columns: 1fr auto; }
+    dialog dd { text-align: right; font-weight: 600; }
+    @media (max-width: 640px) { main { grid-template-columns: 1fr; } .cover { max-width: 200px; } dl { grid-template-columns: 120px 1fr; } }
+  </style>
+</head>
+<body>
+  <header>BOKHANDELEN</header>
+  <main>
+    <div>
+      <!-- The shop's own copy of the PIM's front cover: smaller, renamed, slightly different colours. -->
+      <img class="coverimg" src="img/shop-cover-small.png" alt="Fri" width="240" height="360">
+      <!-- A picture the PIM does not have. -->
+      <img class="coverimg second" src="img/shop-lifestyle.png" alt="Fri, miljøbilde" width="240" height="160">
+    </div>
+    <div>
+      <h1>Fri</h1>
+      <p class="by">Av Lea Ypi, 2023.</p>
+      <div class="price">229,-</div>
+      <button class="buy" type="button">Legg i handlekurv</button>
+
+      <h2>Om boka</h2>
+      <p>Boka følger en familie gjennom tre tiår i en liten by ved kysten. Den handler om hverdager, valg og håp mens alt rundt dem forandrer seg.</p>
+
+      <p class="lang">Forlag: Gyldendal</p>
+      <button type="button" class="open" id="open-info">Produktinformasjon</button>
+    </div>
+  </main>
+  <!-- Like many shops: the specification is in a drawer that opens as a modal dialog,
+       with the values set against its right edge. -->
+  <dialog id="info">
+    <div class="drawer-head"><b>Produktinformasjon</b><button type="button" id="close-info" aria-label="Lukk">×</button></div>
+    <dl>
+      <dt>Format</dt><dd>Pocket</dd>
+      <dt>Utgitt</dt><dd>22.09.2023</dd>
+      <dt>Forlag</dt><dd>Gyldendal</dd>
+      <dt>Forfatter</dt><dd>Lea Ypi</dd>
+      <dt>Oversatt av</dt><dd>Inger Sverreson Holmes</dd>
+      <dt>Originaltittel</dt><dd>Free</dd>
+      <dt>Antall sider</dt><dd>316</dd>
+      <dt>Høyde</dt><dd>210 mm</dd>
+      <dt>Tykkelse</dt><dd>20 mm</dd>
+      <dt>Vekt</dt><dd>247 g</dd>
+      <dt>Serie</dt><dd>Gyldendal pocket</dd>
+      <dt>ISBN</dt><dd>9788205593619</dd>
+    </dl>
+  </dialog>
+  <script>
+    document.getElementById('open-info').addEventListener('click', () => document.getElementById('info').showModal());
+    document.getElementById('close-info').addEventListener('click', () => document.getElementById('info').close());
+  </script>
+  <script src="../harness/lens-boot.js"></script>
+</body>
+</html>

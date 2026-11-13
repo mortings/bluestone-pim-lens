@@ -1,0 +1,14 @@
+{
+  "name": "bluestone-pim-lens",
+  "version": "0.5.0",
+  "private": true,
+  "description": "Unofficial Chrome extension: see which facts on a product page come from Bluestone PIM, and change them or suggest a change, right on the page.",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/inspect.test.js",
+    "test:browser": "node test/e2e/run.js"
+  },
+  "devDependencies": {
+    "playwright-core": "1.59.1"
+  }
+}
