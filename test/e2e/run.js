@@ -344,12 +344,40 @@ async function signingOut({ lens, context, state, mock, toggle }) {
     /click your name there, then Sign out/.test(t) && pimTabs().some((p) => p.url().startsWith('https://demo-ui.test.bluestonepim.com/')), pimTabs().map((p) => p.url()).join(', '));
 }
 
+async function pimFedPage({ lens, page, toggle }) {
+  await toggle();
+  let t = await lens.waitFor(/from the PIM/, 12000);
+  ok('a page with no h1 and an unlabelled number: the variant it shows is found', /Linen Shirt/.test(t) && /Variant · 7001-a/.test(t) && /Found by SKU 7001-a \(beside the heading\)/.test(t), t.slice(0, 400));
+  ok('facts written as a label and the value in the next element are compared', /4 from the PIM/.test(t) && /1 differs/.test(t), (/\d+ from the PIM[^|]*\|[^|]*\|[^|]*/.exec(t) || [''])[0]);
+  const inFooter = await page.evaluate(() => !!document.querySelector('footer [data-bluestone-lens]'));
+  const count = (await lens.all(pill())).length;
+  ok('the heading and each fact get a pill, the footer none', count === 7 && !inFooter, `${count} pills`);
+
+  // Another variant under the same address.
+  await page.getByRole('button', { name: 'Other variant' }).click();
+  t = await lens.waitFor(/Variant · 7001-b/, 12000);
+  ok('choosing another variant on the page: the Lens reads it again and finds that variant', /Found by SKU 7001-b/.test(t) && /4 from the PIM \| 1 differs/.test(t), (/Variant[^|]*\|[^|]*\|[^|]*/.exec(t) || [''])[0]);
+  await page.reload();
+  await toggle();
+  await lens.waitFor(/Variant · 7001-a/, 12000);
+  await page.evaluate(() => window.showOther()); // the page changes what it shows by itself
+  t = await lens.waitFor(/The page has changed since it was read/, 8000);
+  ok('a page that swaps the product by itself is not read again unasked', /Variant · 7001-a/.test(t) && /Read it again/.test(t));
+
+  // The same address without the number on the page: the PIM id in the address is what is left.
+  await page.goto(page.url() + '?bare');
+  await toggle();
+  t = await lens.waitFor(/from the PIM/, 12000);
+  ok('with no number on the page, the PIM id in the address finds the product', /Group · 7001/.test(t) && /Found by the PIM product id in the page’s address/.test(t), t.slice(0, 400));
+}
+
 (async () => {
   console.log(`Browser: ${L.CHROME}`);
   await scenario('Everyday use', {}, everydayUse);
   await scenario('Worker restarts and page changes', {}, restartsAndPageChanges);
   await scenario('Signing in, and odd places', { signedOut: true, page: 'book-drawer.html' }, signInAndOddPlaces);
   await scenario('Signing out, and in as someone else', {}, signingOut);
+  await scenario('A page fed straight from the PIM', { page: 'product/64b7f0a1c2d3e4f5a6b7c8d9' }, pimFedPage);
   await scenario('Pictures, once the image host is allowed', { allowHosts: ['http://img.shop.example/*'] }, pictures);
   const failed = results.filter((r) => !r).length;
   console.log(`\n${results.length - failed} passed, ${failed} failed`);

@@ -93,7 +93,7 @@
       name: text(page.name, 200),
       heading: text(page.heading, 200),
       brand: text(page.brand, 100),
-      ids: rows(page.ids, 16).map((x) => ({ kind: text(x.kind, 30), value: text(x.value, 80), source: text(x.source, 40) })).filter((x) => x.value),
+      ids: rows(page.ids, 16).map((x) => Object.assign({ kind: text(x.kind, 30), value: text(x.value, 80), source: text(x.source, 40) }, x.weak === true ? { weak: true } : {})).filter((x) => x.value),
       // Kept in the order they came: the on-page view finds its elements by position.
       pairs: rows(page.pairs, 120).map((x) => ({ label: text(x.label, 80), value: text(x.value, 300) })),
       blocks: rows(page.blocks, 20).map((x) => ({ text: text(x.text, 2000) })),
@@ -358,6 +358,7 @@
       if (!via) return '';
       let text = '';
       if (via.step === 'number') text = via.kind === 'typed' ? `Found by the product number you typed (${via.value})` : `Found by ${String(via.kind || 'number').toUpperCase()} ${via.value}${via.source ? ` (${via.source})` : ''}`;
+      else if (via.step === 'pimId') text = 'Found by the PIM product id in the page’s address';
       else if (via.step === 'idAttribute') text = via.attribute ? `Found by the PIM attribute “${via.attribute}” = ${via.value}` : 'Found by an identifier attribute in the PIM';
       else if (via.step === 'name') text = 'Matched on name' + (via.considered ? ` and ${via.matches} of ${via.considered} facts on the page` : '');
       else if (via.step === 'remembered') text = 'Remembered from your earlier choice for this page';
@@ -401,7 +402,8 @@
       // shows an identifier that belongs to another product (a shop that keeps one address
       // for several products), the page wins and the old choice is forgotten.
       if (loaded && via && via.step === 'remembered' && page.ids.length) {
-        const numbers = new Set(loaded.chain.map((p) => String(p.number)));
+        // Its number, or one of its parents', or (a page fed from the PIM) one of their ids.
+        const numbers = new Set(loaded.chain.flatMap((p) => [String(p.number), String(p.id)]));
         if (!page.ids.some((c) => numbers.has(String(c.value)))) {
           const other = await I.findProduct(s.pim, page, s.context.id, { idAttributes: await idAttributes(s), idsOnly: true }).catch(() => null);
           if (other && other.product && other.product.id !== loaded.chain[0].id) {

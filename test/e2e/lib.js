@@ -96,7 +96,9 @@ function startShop(state) {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://shop.example');
     state.requests.push(`${req.method} ${req.headers.host}${url.pathname}`);
-    const file = path.join(ROOT, 'test/shop', decodeURIComponent(url.pathname));
+    // A site fed straight from the PIM keeps the PIM's product id in its address.
+    const pathname = /^\/product\/[0-9a-f]{24}$/.test(url.pathname) ? '/content-store.html' : url.pathname;
+    const file = path.join(ROOT, 'test/shop', decodeURIComponent(pathname));
     if (!file.startsWith(path.join(ROOT, 'test/shop')) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); return res.end('not found'); }
     if (file.endsWith('.html')) {
       let html = fs.readFileSync(file, 'utf8');
@@ -186,12 +188,20 @@ function lensView(page, cdp) {
     return { x: (q[0] + q[4]) / 2, y: (q[1] + q[5]) / 2 };
   }
   async function click(pred, nth) {
-    const nodes = await all(pred);
-    const node = nodes[nth || 0];
-    if (!node) throw new Error('nothing to click');
-    const at = await box(node);
-    await page.mouse.click(at.x, at.y);
-    return node;
+    // The Lens may redraw between finding the element and measuring it: look again then.
+    for (let attempt = 0; ; attempt++) {
+      const nodes = await all(pred);
+      const node = nodes[nth || 0];
+      if (!node) throw new Error('nothing to click');
+      try {
+        const at = await box(node);
+        await page.mouse.click(at.x, at.y);
+        return node;
+      } catch (e) {
+        if (attempt >= 2) throw e;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
   }
   const button = (label) => (n, t) => (n.nodeName === 'BUTTON' || n.nodeName === 'A') && (label instanceof RegExp ? label.test(t) : t === label);
   async function waitFor(re, ms) {

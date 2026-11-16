@@ -11,12 +11,33 @@ function bsiExtractPage(keep) {
   const clean = (s) => String(s == null ? '' : s).replace(/[\s ]+/g, ' ').trim();
   const short = (s, n) => (s.length > n ? s.slice(0, n) : s);
   const ids = [];
-  const addId = (kind, value, source) => {
+  // weak: a guess (a number with no label). It counts only when the PIM product also has the page's name.
+  const addId = (kind, value, source, weak) => {
     const v = clean(value);
-    if (v && v.length <= 80 && ids.length < 16 && !ids.some((x) => x.value === v)) ids.push({ kind, value: v, source });
+    if (v && v.length <= 80 && ids.length < 16 && !ids.some((x) => x.value === v)) ids.push(weak ? { kind, value: v, source, weak: true } : { kind, value: v, source });
   };
   let name = '';
   let brand = '';
+
+  // 0. The page's own address. Sites fed straight from the PIM (a content store, a portal)
+  //    put the PIM's product id in it: /product/64b7f0a1c2d3e4f5a6b7c8d9.
+  try {
+    const own = location.pathname.split('/').filter((part) => /^[0-9a-f]{24}$/i.test(part)).pop();
+    if (own) addId('pim id', own.toLowerCase(), 'page address');
+  } catch (e) {
+    /* odd address: skip */
+  }
+
+  // The page's main heading: its h1. A page without one: the h2 its title names, or its only h2.
+  const mainHeading = (() => {
+    const h1 = document.querySelector('h1');
+    if (h1 && clean(h1.textContent)) return h1;
+    const title = clean(document.title).toLowerCase();
+    const h2s = [...document.querySelectorAll('h2')]
+      .filter((el) => !el.closest('nav, header, footer, aside, dialog, [role="dialog"]') && clean(el.textContent).length >= 3)
+      .slice(0, 20);
+    return h2s.find((el) => title.includes(clean(el.textContent).toLowerCase())) || (h2s.length === 1 ? h2s[0] : null) || h1;
+  })();
 
   // 1. Structured product data (schema.org JSON-LD), which most shops publish for search engines.
   const nodes = [];
@@ -114,8 +135,7 @@ function bsiExtractPage(keep) {
   }
   if (!name) {
     const og = document.querySelector('meta[property="og:title"]');
-    const h1 = document.querySelector('h1');
-    name = clean((h1 && h1.textContent) || (og && og.getAttribute('content')) || document.title);
+    name = clean((mainHeading && mainHeading.textContent) || (og && og.getAttribute('content')) || document.title);
   }
 
   // 4. Label/value pairs: spec tables, definition lists and "Label: value" lines.
@@ -138,13 +158,27 @@ function bsiExtractPage(keep) {
     if (dd && dd.tagName === 'DD') addPair(dt.textContent, dd.textContent, dd);
   }
   for (const el of document.querySelectorAll('li, p')) {
-    if (el.children.length > 2) continue;
+    if (el.children.length > 2 || el.closest('footer, nav')) continue;
     const m = /^([^:]{2,50}):\s+(.{1,160})$/.exec(clean(el.textContent));
     if (m) addPair(m[1], m[2], el);
   }
+  // "Label:" in one element and the value in the next: <p>Material:</p><div>Cotton</div>.
+  let labels = 0;
+  for (const el of document.querySelectorAll('p, span, div, strong, b, label, h5, h6')) {
+    if (el.children.length || labels++ > 4000) continue;
+    const label = clean(el.textContent);
+    if (!/^[^:]{2,50}:$/.test(label) || el.closest('footer, nav')) continue;
+    // The next element, or the one after the label's own wrapper.
+    let value = el.nextElementSibling;
+    if (!value && el.parentElement && el.parentElement.children.length === 1) value = el.parentElement.nextElementSibling;
+    if (!value) continue;
+    // innerText keeps lines apart ("Clothing" and "T-shirts" in two paragraphs).
+    const v = clean(value.innerText || value.textContent);
+    if (v && !/:$/.test(v)) addPair(label, v, value);
+  }
 
   // 4a. The heading and the longer texts (descriptions), for the on-page view.
-  const h1 = document.querySelector('h1');
+  const h1 = mainHeading;
   const heading = h1 ? short(clean(h1.textContent), 200) : '';
   const blocks = [];
   if (keep) {
@@ -226,6 +260,16 @@ function bsiExtractPage(keep) {
     if (text.length < 5 || text.length > 70) continue;
     const m = idLine.exec(text);
     if (m && looksLikeId(m[2])) addId(idKind(m[1]), m[2], 'shown on the page');
+  }
+
+  // 4d. A number on its own right beside the heading, with no label ("7001" above the name).
+  //     A guess, so marked weak. Not a price ("79.00").
+  if (mainHeading) {
+    for (const el of [mainHeading.previousElementSibling, mainHeading.nextElementSibling]) {
+      if (!el || el.children.length) continue;
+      const v = clean(el.textContent);
+      if (/^[A-Za-z0-9][A-Za-z0-9._\-/]{2,39}$/.test(v) && /\d/.test(v) && !/^\d+[.,]\d{2}$/.test(v)) addId('sku', v, 'beside the heading', true);
+    }
   }
 
   // 5. What the user selected, and the label that goes with it.

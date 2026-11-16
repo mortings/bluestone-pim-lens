@@ -156,6 +156,21 @@
   // "#/product/12" is a page of its own on some shops; "#reviews" is only a place on a page.
   const addressNow = () => location.origin + location.pathname + location.search + (/^#[/!]/.test(location.hash) ? location.hash : '');
 
+  /**
+   * What the page says it is showing: its heading, and a product number right beside it.
+   * A page that swaps one variant for another keeps its address, but not this.
+   */
+  function showingNow() {
+    const heading = state.page && state.page.headingEl;
+    if (!heading) return '';
+    if (!heading.isConnected) return null; // the page drew its heading anew
+    const code = (el) => {
+      const text = el && !el.children.length ? el.textContent.replace(/\s+/g, ' ').trim() : '';
+      return /^[A-Za-z0-9][A-Za-z0-9._\-/]{2,39}$/.test(text) && /\d/.test(text) ? text : '';
+    };
+    return [heading.textContent.replace(/\s+/g, ' ').trim(), code(heading.previousElementSibling), code(heading.nextElementSibling)].join(' | ');
+  }
+
   function readPage() {
     try {
       state.page = bsiExtractPage(true);
@@ -165,6 +180,7 @@
     }
     state.address = addressNow();
     state.path = location.pathname + (/^#[/!]/.test(location.hash) ? location.hash : '');
+    state.showing = showingNow();
     state.moved = false;
     movedAt = 0;
     readAt = Date.now();
@@ -172,15 +188,17 @@
 
   /**
    * A shop that changes page without reloading (most modern shops) leaves the Lens
-   * looking at the previous product. Once the address has changed and the new page
-   * has had a moment to draw itself, read it again.
+   * looking at the previous product. Once the address has changed, or the page shows
+   * another product under the same address (another variant), and the new page has
+   * had a moment to draw itself, read it again.
    */
   let movedAt = 0;
   let readAt = 0; // when the page was last read
   let gestureAt = 0; // the user's last real click or key press on the page
   function checkAddress() {
     if (!state.on || !state.page || state.phase === 'loading') return;
-    if (addressNow() === state.address) {
+    const sameProduct = showingNow() === state.showing;
+    if (addressNow() === state.address && sameProduct) {
       movedAt = 0;
       if (state.moved) {
         state.moved = false;
@@ -188,7 +206,7 @@
       }
       return;
     }
-    const otherPage = location.pathname + (/^#[/!]/.test(location.hash) ? location.hash : '') !== state.path;
+    const otherPage = !sameProduct || location.pathname + (/^#[/!]/.test(location.hash) ? location.hash : '') !== state.path;
     // Only the part after "?" changed while a card is open: let the user finish first.
     if (state.open && !otherPage) return;
     if (!movedAt) {

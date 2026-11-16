@@ -58,12 +58,30 @@
   }
 
   /** Step 1: an identifier on the page is a product number in the PIM. */
-  async function byNumber(pim, ids, context) {
+  async function byNumber(pim, ids, context, pageName) {
     if (!ids.length) return null;
     const found = await pim.findByNumbers(ids.map((c) => String(c.value)), context);
     for (const c of ids) {
       const hit = found.find((p) => p.number === String(c.value));
+      // A number the page shows without a label is a guess: the product must have the page's name too.
+      if (hit && c.weak && nameSimilarity(pageName, hit.name) < 0.6) continue;
       if (hit) return { product: hit, via: { step: 'number', kind: c.kind, value: c.value, source: c.source } };
+    }
+    return null;
+  }
+
+  /** Step 2b: the page's address holds the PIM's own id of the product (sites fed straight from the PIM). */
+  async function byPimId(pim, ids, context) {
+    for (const c of ids.slice(0, 2)) {
+      let rows = [];
+      try {
+        rows = await pim.summaries([String(c.value)], context);
+      } catch (e) {
+        // "No such product" is an answer; not being signed in, or no connection, is not.
+        if (e && (e.kind === 'auth' || e.kind === 'network')) throw e;
+      }
+      const hit = rows.find((p) => p.id === String(c.value));
+      if (hit) return { product: { id: hit.id, number: hit.number, name: hit.name, type: hit.type }, via: { step: 'pimId', value: c.value, source: c.source } };
     }
     return null;
   }
@@ -133,6 +151,7 @@
    * Find the PIM product for a page, trying in order:
    *   1. an identifier on the page as product number
    *   2. an identifier on the page as the value of an identifier attribute
+   *   2b. the PIM's own product id, when the page's address holds one
    *   3. the product name (fuzzy search), checked against the facts on the page
    * and, when all of that finds nothing, the same again with the user's selection.
    *
@@ -145,18 +164,22 @@
     const seen = new Set();
     const ids = (page.ids || []).filter((c) => c.value && !seen.has(c.value) && seen.add(c.value));
 
-    const attempt = async (idList, name) => {
+    const attempt = async (all, name) => {
+      // The PIM's own product id, when the page's address holds one (see step 2b).
+      const own = all.filter((c) => c.kind === 'pim id' && /^[0-9a-f]{24}$/i.test(String(c.value)));
+      const idList = all.filter((c) => !own.includes(c));
       // 1. product number
       if (idList.length) {
         tried.push(`product number: ${idList.map((c) => c.value).slice(0, 4).join(', ')}`);
-        const hit = await byNumber(pim, idList, context);
+        const hit = await byNumber(pim, idList, context, name || page.name);
         if (hit) return Object.assign(hit, { candidates: [] });
       }
       // 2. identifier attributes
       let pool = [];
-      if (idList.length && (opts.idAttributes || []).length) {
+      if (idList.some((c) => !c.weak) && (opts.idAttributes || []).length) {
         tried.push(`identifier attributes: ${opts.idAttributes.map((a) => a.name).join(', ')}`);
-        pool = await byIdAttribute(pim, idList, opts.idAttributes, context);
+        // A number the page shows without a label is not sure enough for this.
+        pool = await byIdAttribute(pim, idList.filter((c) => !c.weak), opts.idAttributes, context);
         if (pool.length === 1) {
           const loaded = await load(pim, pool[0], context);
           const p = loaded.chain[0];
@@ -167,6 +190,14 @@
             loaded, candidates: [],
           };
         }
+      }
+      // 2b. the PIM's own product id in the page's address. After the identifiers the page shows:
+      //     a page for a product with variants keeps the parent's address while it shows one
+      //     variant, with that variant's number.
+      if (own.length) {
+        tried.push('PIM product id in the page’s address');
+        const hit = await byPimId(pim, own, context);
+        if (hit) return Object.assign(hit, { candidates: [] });
       }
       // 3. name, checked against the facts
       let viaStep = 'idAttribute';

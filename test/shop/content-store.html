@@ -1,0 +1,66 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Linen Shirt - Demo Content Store</title>
+  <!-- A made-up page laid out like a site that is fed straight from the PIM: no h1, the
+       product number above the name with no label, each fact as "Label:" in one element
+       and the value in the next, and the PIM's product id in the address (the test serves
+       this file at /product/<id>). The address is the parent's; the page shows one variant.
+       ?bare leaves out the number, ?group shows the parent itself. "Other variant" shows the
+       second variant under the same address. -->
+  <script id="page-data" type="application/json">{"relations":[{"productId":"64b7f0a1c2d3e4f5a6b7c8e1"},{"productId":"64b7f0a1c2d3e4f5a6b7c8e2"}]}</script>
+  <style>
+    body { margin: 0; font: 15px/1.5 -apple-system, "Segoe UI", Arial, sans-serif; color: #1f2430; background: #fff; }
+    .top, footer { padding: 14px 24px; background: #f4f5f7; color: #6b7280; font-size: 13px; }
+    section { max-width: 880px; margin: 0 auto; padding: 24px; }
+    .number { color: #8a8f98; margin: 0; }
+    h2 { margin: 2px 0 14px; font-size: 26px; }
+    h4 { margin: 22px 0 6px; }
+    .facts p { font-weight: 700; margin: 10px 0 0; }
+  </style>
+</head>
+<body>
+  <div class="top">Home · Clothing · Shirts</div>
+  <section>
+    <div>
+      <p class="number" id="number">7001-a</p>
+      <h2 id="name">Linen Shirt</h2>
+      <div><div>Variants:	</div></div>
+      <div><ul><li><span></span></li><li><button type="button" id="other" aria-label="Other variant" style="width:44px;height:44px"></button></li></ul></div>
+      <p>Desc<br></p>
+      <div><div>Categories:	</div><div><p><a href="/category/1">Clothing</a>, <a href="/category/2">Shirts</a></p><p><a href="/category/1">Clothing</a></p></div></div>
+    </div>
+    <div class="facts">
+      <h4>Clothes</h4>
+      <div>
+        <p>Material:</p><div>Linen</div><div></div>
+        <p>Care instructions:</p><div><div><p>Machine wash at 40°C</p></div></div><div></div>
+        <p>Fit:</p><div id="fit">Slim</div><div></div>
+        <p>Size:</p><div id="size">L</div><div></div>
+        <p>Weight:</p><div id="weight">210</div>
+      </div>
+    </div>
+  </section>
+  <footer><p>Phone: 00 00 000 0000, Email: shop@example.com</p></footer>
+  <script>
+    // Another variant of the same product: the page changes, its address does not.
+    window.showOther = () => {
+      document.getElementById('number').textContent = '7001-b';
+      document.getElementById('fit').textContent = 'Regular fit';
+      document.getElementById('size').textContent = 'M';
+      document.getElementById('weight').textContent = '200';
+    };
+    document.getElementById('other').addEventListener('click', window.showOther);
+    const q = new URLSearchParams(location.search);
+    if (q.has('bare')) document.getElementById('number').remove();
+    if (q.has('group')) {
+      document.getElementById('number').textContent = '7001';
+      document.getElementById('name').textContent = 'Linen Shirt Group';
+      document.title = 'Linen Shirt Group - Demo Content Store';
+    }
+  </script>
+  <script src="../harness/lens-boot.js"></script>
+</body>
+</html>

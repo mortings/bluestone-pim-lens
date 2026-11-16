@@ -865,3 +865,69 @@ test('signing out is never reported as done unless the PIM says nobody is signed
     assert.match(x.error, /^Could not sign out\. Open the PIM and sign out there\.$/);
   }
 });
+
+// ---- a page fed straight from the PIM (a content store) ---------------------
+
+const GROUP_ID = '64b7f0a1c2d3e4f5a6b7c8d9';
+const VARIANT_ID = '64b7f0a1c2d3e4f5a6b7c8da';
+// What the page reader makes of test/shop/content-store.html: the parent's id in the address,
+// other products' ids from the page's scripts, and the shown variant's number with no label.
+const storePage = (over) => Object.assign({
+  url: `https://store.example/product/${GROUP_ID}`, host: 'store.example', lang: '', name: 'Linen Shirt', heading: 'Linen Shirt',
+  ids: [
+    { kind: 'pim id', value: GROUP_ID, source: 'page address' },
+    { kind: 'shop id', value: '64b7f0a1c2d3e4f5a6b7c8e1', source: 'page scripts' },
+    { kind: 'sku', value: '7001-a', source: 'beside the heading', weak: true },
+  ],
+  pairs: [{ label: 'Material', value: 'Linen' }, { label: 'Care instructions', value: 'Machine wash at 40°C' }, { label: 'Fit', value: 'Slim' }, { label: 'Size', value: 'L' }],
+}, over);
+
+test('a page fed from the PIM: the number beside the heading finds the variant it shows', async () => {
+  const { send } = lens();
+  const r = await send('lens:scan', { page: storePage() });
+  assert.equal(r.state, 'ready');
+  assert.deepEqual([r.product.id, r.product.number], [VARIANT_ID, '7001-a']);
+  assert.match(r.via, /^Found by SKU 7001-a \(beside the heading\)/);
+  assert.equal(byLabel(r, 'Material').status, 'match');
+  assert.equal(byLabel(r, 'Care instructions').status, 'differs');
+});
+
+test('a page fed from the PIM: without a number, the PIM id in the address finds the product', async () => {
+  const { send } = lens();
+  const bare = storePage({ name: 'Linen Shirt Group', heading: 'Linen Shirt Group', ids: storePage().ids.slice(0, 2) });
+  const r = await send('lens:scan', { page: bare });
+  assert.equal(r.state, 'ready');
+  assert.deepEqual([r.product.id, r.product.number], [GROUP_ID, '7001']);
+  assert.equal(r.via, 'Found by the PIM product id in the page’s address');
+  // An id that is no product of this organisation is passed over, not an error.
+  const other = await send('lens:scan', { page: storePage({ url: 'https://store.example/product/ffffffffffffffffffffffff', name: 'Garden hose', heading: 'Garden hose', ids: [{ kind: 'pim id', value: 'ffffffffffffffffffffffff', source: 'page address' }], pairs: [] }) });
+  assert.equal(other.state, 'notfound');
+  assert.ok(other.tried.includes('PIM product id in the page’s address'));
+});
+
+test('a number with no label counts only when the product has the page\'s name too', async () => {
+  const { send } = lens();
+  // "7001-a" beside the heading of a page about something else: not taken as that product.
+  const stray = storePage({ url: 'https://store.example/hose', name: 'Garden hose 25 m', heading: 'Garden hose 25 m', ids: [{ kind: 'sku', value: '7001-a', source: 'beside the heading', weak: true }], pairs: [] });
+  assert.equal((await send('lens:scan', { page: stray })).state, 'notfound');
+  // The same number with a label ("SKU: 7001-a") is the page's own statement, and is.
+  const labelled = Object.assign({}, stray, { url: 'https://store.example/hose2', ids: [{ kind: 'sku', value: '7001-a', source: 'shown on the page' }] });
+  assert.equal((await send('lens:scan', { page: labelled })).product.id, VARIANT_ID);
+});
+
+test('a variant chosen by the user stays chosen on its parent\'s address', async () => {
+  const { send } = lens();
+  const bare = storePage({ name: 'Linen Shirt Group', heading: 'Linen Shirt Group', ids: storePage().ids.slice(0, 2) });
+  assert.equal((await send('lens:scan', { page: bare, productId: VARIANT_ID })).product.id, VARIANT_ID);
+  assert.equal((await send('lens:scan', { page: bare })).product.id, VARIANT_ID);
+});
+
+test('a label that only contains the word "product" or "description" is not the product\'s name or description', async () => {
+  const { send } = lens();
+  const r = await send('lens:scan', { page: storePage({ pairs: [{ label: 'Focus Product', value: 'false' }, { label: 'Product content status', value: 'Ready' }, { label: 'Product name', value: 'Wool Jumper' }, { label: 'prefered_sku', value: '7001-a' }] }) });
+  assert.equal(byLabel(r, 'Focus Product').status, 'unknown');
+  assert.equal(byLabel(r, 'Product content status').status, 'unknown');
+  // A label that does name the field still counts, and a value that is in the PIM is found whatever its label.
+  assert.equal(byLabel(r, 'Product name').status, 'differs');
+  assert.equal(byLabel(r, 'prefered_sku').status, 'match');
+});

@@ -220,10 +220,14 @@
       let score = 0;
       let status = 'match';
       let why = v.why;
+      // When the value is not in the PIM, only the label says which field is meant. For the
+      // product's own name, number and description the label must then say so outright:
+      // "Focus Product" is not the product's name because it has the word "product" in it.
+      const named = fact.kind && fact.kind !== 'attribute' ? 0.9 : 0.75;
       if (v.score > 0) {
         score = hasLabel ? 0.7 * v.score + 0.3 * l + (l >= 0.75 ? 0.05 : 0) : v.score * 0.92;
         if (l >= 0.75) why += ', label matches';
-      } else if (l >= 0.75 && (fact.texts || []).some((t) => norm(t))) {
+      } else if (l >= named && (fact.texts || []).some((t) => norm(t))) {
         status = 'differs';
         score = 0.5 + 0.3 * l;
         why = 'label matches, value differs';
@@ -231,7 +235,7 @@
         const q = parseQuantity(page.value);
         const unit = norm(fact.unit || splitLabel(fact.label).unit);
         if (q && q.unit && unit && q.unit === unit) score += 0.05;
-      } else if (empties && l >= 0.75) {
+      } else if (empties && l >= named) {
         // The label names this attribute, and the PIM has no value for it.
         status = 'empty';
         score = 0.36 + 0.2 * l;

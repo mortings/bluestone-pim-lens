@@ -433,6 +433,7 @@
     let text = '';
     const own = via.kind === 'typed' || via.kind === 'selection';
     if (via.step === 'number') text = own ? `Recognised by the product number you ${via.kind === 'typed' ? 'typed' : 'selected'} (${via.value})` : `Recognised by ${String(via.kind).toUpperCase()} ${via.value}${via.source ? ` (${via.source})` : ''}`;
+    else if (via.step === 'pimId') text = 'Recognised by the PIM product id in the page’s address';
     else if (via.step === 'idAttribute') text = via.attribute ? `Recognised by the PIM attribute “${via.attribute}” = ${via.value}` : 'Recognised by an identifier attribute in the PIM';
     else if (via.step === 'name') text = 'Matched on name' + (via.considered ? ` and ${via.matches} of ${via.considered} facts on the page` : '');
     else if (via.step === 'remembered') text = 'Remembered from your earlier choice for this page';

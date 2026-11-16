@@ -124,6 +124,21 @@
             attr('b-desc', ['Boka følger en familie gjennom tre tiår i en liten by ved kysten. <br> <br>Den handler om hverdager, valg og håp mens alt rundt dem forandrer seg.']),
           ],
         },
+        // A product with variants whose ids are the PIM's own kind (24 hex), as a page fed straight
+        // from the PIM puts them in its address (test/shop/content-store.html).
+        '64b7f0a1c2d3e4f5a6b7c8d9': {
+          id: '64b7f0a1c2d3e4f5a6b7c8d9', number: '7001', name: 'Linen Shirt Group', type: 'GROUP',
+          productVariants: ['64b7f0a1c2d3e4f5a6b7c8da', '64b7f0a1c2d3e4f5a6b7c8db'],
+          attributes: [attr('d-material', ['Linen'], { copy: true }), attr('d-care', ['Hand wash'], { copy: true })],
+        },
+        '64b7f0a1c2d3e4f5a6b7c8da': {
+          id: '64b7f0a1c2d3e4f5a6b7c8da', number: '7001-a', name: 'Linen Shirt', type: 'VARIANT', variantParentId: '64b7f0a1c2d3e4f5a6b7c8d9',
+          attributes: [attr('d-material', ['Linen']), attr('d-care', ['Hand wash']), attr('d-fit', ['Slim']), attr('d-size', ['s-l']), attr('d-weight', ['210'])],
+        },
+        '64b7f0a1c2d3e4f5a6b7c8db': {
+          id: '64b7f0a1c2d3e4f5a6b7c8db', number: '7001-b', name: 'Linen Shirt', type: 'VARIANT', variantParentId: '64b7f0a1c2d3e4f5a6b7c8d9',
+          attributes: [attr('d-material', ['Linen']), attr('d-care', ['Hand wash']), attr('d-fit', ['Regular fit']), attr('d-size', ['s-m']), attr('d-weight', ['200'])],
+        },
         'v-s': { id: 'v-s', number: 'SCD-BLU-S', name: 'Summer Cotton Dress, Blue, S', type: 'VARIANT', variantParentId: 'grp-blue', attributes: [attr('d-weight', ['180']), attr('d-size', ['s-s'])] },
         'v-l': { id: 'v-l', number: 'SCD-BLU-L', name: 'Summer Cotton Dress, Blue, L', type: 'VARIANT', variantParentId: 'grp-blue', attributes: [attr('d-weight', ['195']), attr('d-size', ['s-l'])] },
         'v-bk-s': { id: 'v-bk-s', number: 'SCD-BLK-S', name: 'Summer Cotton Dress, Black, S', type: 'VARIANT', variantParentId: 'grp-black', attributes: [] },
