@@ -4,7 +4,7 @@
 
 A Chrome extension that turns any product page into a view of Bluestone PIM. Click the toolbar button on a product page: the Lens finds the product in the PIM and puts a small pill next to each fact on the page, saying whether the value comes from the PIM. Click a pill to see where the value is kept, and change it or suggest a change, without leaving the page.
 
-Version 0.6.1.
+Version 0.6.2.
 
 ![Pills and marked values on a product page](docs/lens-pills.jpg)
 
@@ -95,7 +95,7 @@ Pages fed straight from the PIM, such as a content store, are read as well: a pa
 
 ## How values are matched
 
-By value first (same text, same number, same amount in another unit, same date in another format, a list against several values), then by label. Labels in another language are understood for common attributes: "Vekt", "Gewicht" and "Unit Weight" are the same thing. People stored as small records (`{"name": "Lea Ypi", …}`) are compared by name.
+By value first (same text, same number, same amount in another unit, same date in another format, a list against several values), then by label. A select attribute matches by the option's value or by its number: a shop that shows "M2" where the PIM shows "Square metre" is the same value, not a difference. Labels in another language are understood for common attributes: "Vekt", "Gewicht" and "Unit Weight" are the same thing. People stored as small records (`{"name": "Lea Ypi", …}`) are compared by name.
 
 When the Lens gets an attribute wrong or cannot find it, choose the right one in the card. That link between the page's label and the attribute is remembered for that shop and organisation, so every later product on that shop is matched the same way.
 
@@ -130,7 +130,7 @@ Found a security problem? See [SECURITY.md](SECURITY.md).
 
 | | |
 |---|---|
-| 55 automated tests (`npm test`) | Pass. Matching, finding the product (also on a page fed straight from the PIM), Edit (review and save), Suggest (task, assignee, product on the task), roles, label links, organisation switching, signing out (reported as done only when the PIM says nobody is signed in), pictures, a save staying in the language and organisation the page was read with, and how the service handles odd or hostile messages, all against a stand-in PIM. |
+| 57 automated tests (`npm test`) | Pass. Matching (a select by its option's value or number among it), finding the product (also on a page fed straight from the PIM), Edit (review and save), Suggest (task, assignee, product on the task), roles, label links, organisation switching, signing out (reported as done only when the PIM says nobody is signed in), pictures, a save staying in the language and organisation the page was read with, and how the service handles odd or hostile messages, all against a stand-in PIM. |
 | 53 checks in a real browser (`npm run test:browser`) | Pass, in Chromium 147. The extension is loaded unchanged and used with real clicks against a stand-in PIM at the PIM's own addresses: pills, cards, a suggestion, a save, the side panel request, pictures compared in the background worker, facts in a modal drawer, a shop that changes product without reloading, a page laid out like a content store (and another variant chosen on it), signed out, signing out and another user signing in, a PIM that keeps its session, the background worker stopping and starting, and a PIM that does not answer. Also what a page can do to it: a page script cannot open the Lens, find or select its text, click its buttons, or get a covered button to act. |
 | An independent code review | A second reviewer read all the code for security and reliability problems after the first round of fixes. What it found is fixed or listed above under "What a hostile page could still do". |
 | A real Test organisation, read only | Finding books from a real shop's page data, the comparison (17 of 17 facts confirmed on one book; real differences flagged on others; empty attributes reported as empty), roles, the list of people for suggestions, history and the save review. |
@@ -157,7 +157,7 @@ Found a security problem? See [SECURITY.md](SECURITY.md).
 There is no build step: the `ext` folder is the extension.
 
 ```
-npm test                 # 55 unit tests, no dependencies
+npm test                 # 57 unit tests, no dependencies
 npm install
 npx playwright-core install chromium
 npm run test:browser     # the extension in a real Chromium, against a stand-in PIM

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Bluestone PIM Lens",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Unofficial Labs prototype. See which facts on a product page come from Bluestone PIM, and change them or suggest a change there.",
   "minimum_chrome_version": "116",
   "incognito": "not_allowed",

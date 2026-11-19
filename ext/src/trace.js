@@ -122,6 +122,23 @@
   }
 
   /**
+   * A select option has a value ("Square metre") and a number ("M2"). The PIM shows the
+   * value; a shop may show the number. These are the numbers of the chosen options, where
+   * they say something else than the value: another form the fact can take on a page.
+   */
+  function optionNumbersFor(attr, def) {
+    if (!attr || !def || (def.dataType !== 'single_select' && def.dataType !== 'multi_select')) return [];
+    const options = (def.restrictions && def.restrictions.enum && def.restrictions.enum.values) || [];
+    const same = (a, b) => String(a == null ? '' : a).trim().toLowerCase() === String(b == null ? '' : b).trim().toLowerCase();
+    const out = [];
+    for (const id of attr.values || []) {
+      const o = options.find((x) => x.valueId === id);
+      if (o && o.number != null && String(o.number).trim() && !same(o.number, o.value)) out.push(String(o.number));
+    }
+    return out;
+  }
+
+  /**
    * All facts of the page's product that could show on a page: name, number,
    * description and every attribute on it or on its parents.
    */
@@ -156,6 +173,8 @@
         unit,
         contextAware: !!def.contextAware,
         texts,
+        // Select options by their number: matched like the texts, never shown as the PIM's value.
+        altTexts: optionNumbersFor(holderAttr, def),
         display: texts.length ? texts.join(', ') + (unit && texts.length === 1 ? ' ' + unit : '') : '',
         raw: rawValues(holderAttr),
         options: def.dataType === 'single_select' ? ((def.restrictions && def.restrictions.enum && def.restrictions.enum.values) || []) : null,

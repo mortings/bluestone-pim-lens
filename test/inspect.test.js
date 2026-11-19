@@ -931,3 +931,46 @@ test('a label that only contains the word "product" or "description" is not the 
   assert.equal(byLabel(r, 'Product name').status, 'differs');
   assert.equal(byLabel(r, 'prefered_sku').status, 'match');
 });
+
+// ---- select options shown by their number ------------------------------------------------------
+
+test('a select matches by the option’s value or by its number', async () => {
+  // A shop that shows the option's number ("M2") where the PIM shows its value ("Square metre").
+  const mock = createMock();
+  const options = (...rows) => ({ enum: { values: rows.map(([valueId, value, number]) => ({ valueId, value, number })) } });
+  mock.db.definitions.push(
+    { id: 'd-unit', name: 'Sales unit', dataType: 'single_select', restrictions: options(['u-m2', 'Square metre', 'M2'], ['u-pla', 'Sheets', 'PLA'], ['u-pak', 'Pack', 'PAK']) },
+    { id: 'd-damp', name: 'Moisture resistant', dataType: 'single_select', restrictions: options(['y', 'Yes', 'Ja'], ['n', 'No', 'Nei']) },
+    { id: 'd-marks', name: 'Markings', dataType: 'multi_select', restrictions: options(['k-fsc', 'Forest Stewardship Council', 'FSC'], ['k-pefc', 'PEFC', 'PEFC'], ['k-sw', 'Nordic Swan', 'SWAN']) },
+  );
+  mock.db.products['v-m'].attributes.push({ definitionId: 'd-unit', values: ['u-m2'] }, { definitionId: 'd-damp', values: ['n'] }, { definitionId: 'd-marks', values: ['k-fsc', 'k-pefc'] });
+  const loaded = await I.load(createPim(mock.request), 'v-m', 'en');
+  const fact = (label) => loaded.facts.find((f) => f.label === label);
+  // The PIM's value is what is shown as the PIM's value; the number is only another form to match.
+  assert.equal(fact('Sales unit').display, 'Square metre');
+  assert.deepEqual(fact('Sales unit').altTexts, ['M2']);
+  assert.deepEqual(fact('Markings').altTexts, ['FSC']); // "PEFC" is value and number alike: nothing to add
+  assert.deepEqual(fact('Size').altTexts, []); // "M" and "m": the same
+
+  const check = (label, value) => M.checkPairs([{ label, value }], loaded.facts)[0];
+  const byNumber = check('Sales unit', 'M2');
+  assert.deepEqual([byNumber.status, byNumber.top.fact.label, byNumber.top.why], ['match', 'Sales unit', 'same as the option’s number, label matches']);
+  assert.equal(check('Sales unit', 'm2').status, 'match');
+  assert.equal(check('Sales unit', 'Square metre').status, 'match'); // by value, as before
+  assert.equal(check('Sales unit', 'PLA').status, 'differs'); // another option's number: a real difference
+  assert.equal(check('Moisture resistant', 'Nei').status, 'match');
+  assert.equal(check('Moisture resistant', 'Ja').status, 'differs');
+  // Several values, each by value or by number.
+  assert.equal(check('Markings', 'FSC, PEFC').status, 'match');
+  assert.equal(check('Markings', 'Forest Stewardship Council, PEFC').status, 'match');
+  assert.equal(check('Markings', 'FSC, SWAN').status, 'differs');
+  // Without a label, the number still finds its attribute.
+  const bare = M.rank({ label: '', value: 'M2' }, loaded.facts)[0];
+  assert.deepEqual([bare.fact.label, bare.status], ['Sales unit', 'match']);
+});
+
+test('"Nei" is a no', () => {
+  assert.ok(M.valueScore('Nei', 'false').score > 0.8);
+  assert.ok(M.valueScore('Nei', 'No').score > 0.8);
+  assert.equal(M.valueScore('Nei', 'Yes').score, 0);
+});

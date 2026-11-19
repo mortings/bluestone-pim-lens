@@ -25,7 +25,7 @@
   const UNIT_ALIAS = { gr: 'g', gram: 'g', grams: 'g', gramm: 'g', kilo: 'kg', millimeter: 'mm', meter: 'm', liter: 'l' };
 
   const TRUE_WORDS = new Set(['true', 'yes', 'ja', 'oui', 'si', 'sí', 'y', '1', '✓', '✔']);
-  const FALSE_WORDS = new Set(['false', 'no', 'nein', 'nej', 'non', 'n', '0', '✗', '✘']);
+  const FALSE_WORDS = new Set(['false', 'no', 'nei', 'nein', 'nej', 'non', 'n', '0', '✗', '✘']);
 
   function norm(s) {
     return String(s == null ? '' : s)
@@ -195,11 +195,16 @@
       const s = valueScore(pageValue, t, unit);
       if (s.score > best.score) best = s;
     }
+    // A select option shown by its number ("M2") where the PIM shows its value ("Square metre").
+    const numbers = (fact.altTexts || []).map(norm).filter(Boolean);
+    if (best.score < 1 && numbers.includes(norm(pageValue))) best = { score: 1, why: 'same as the option’s number' };
     // A list on the page against several values in the PIM: "Harry Potter, Harry Potter-universet".
+    // Each part may be an option's value or its number.
     const texts = (fact.texts || []).map(norm).filter(Boolean);
     if (best.score < 1 && texts.length > 1) {
       const parts = String(pageValue == null ? '' : pageValue).split(/\s*[,;]\s*/).map(norm).filter(Boolean);
       if (parts.length === texts.length && parts.every((x) => texts.includes(x))) best = { score: 0.98, why: 'same values' };
+      else if (parts.length === texts.length && parts.every((x) => texts.includes(x) || numbers.includes(x))) best = { score: 0.98, why: 'same values, by the options’ numbers' };
     }
     return best;
   }
