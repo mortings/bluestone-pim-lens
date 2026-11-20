@@ -8,7 +8,9 @@
 //   - clicking the toolbar button (which is what gives the extension access to the
 //     page): the test copy of the manifest names the test shop's address instead;
 //   - answering Chrome's permission question for a shop's image host: one scenario
-//     checks that the question is reached, another starts with the answer "Allow".
+//     checks that the question is reached, another starts with the answer "Allow";
+//   - answering Chrome's permission question for Production's address: the same way.
+//     "Production" here is the stand-in PIM at Production's hostname, never the real one.
 const L = require('./lib.js');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -30,11 +32,15 @@ async function scenario(title, options, body) {
   const signedOut = L.createMock({ signedOut: true });
   state.mocks['demo-ui.test.bluestonepim.com'] = options.signedOut ? signedOut : mock;
   state.mocks['app.test.bluestonepim.com'] = signedOut;
+  // Somebody is always signed in on (the stand-in for) Production: the Lens must not go there unasked.
+  const prod = L.createMock();
+  state.mocks['app.bluestonepim.com'] = prod;
+  const onProduction = () => state.requests.filter((r) => /^[A-Z]+ (app|idp)\.bluestonepim\.com\//.test(r));
   const pim = await L.startPim(state);
   const shop = await L.startShop(state);
   const launched = await L.launch(L.copyExtension(options.allowHosts), !process.env.HEADED);
   const context = launched.context;
-  const world = { sw: launched.sw, context, state, mock, signedOut };
+  const world = { sw: launched.sw, context, state, mock, signedOut, prod, onProduction };
   context.on('serviceworker', (w) => (world.sw = w));
   try {
     const page = await context.newPage();
@@ -49,6 +55,7 @@ async function scenario(title, options, body) {
       await showLens(tab, 'lens:toggle');
     });
     await body(world);
+    if (!options.production) ok('Production was never contacted', onProduction().length === 0, onProduction().slice(0, 5).join(', '));
     ok('no errors on the page', world.pageErrors.length === 0, world.pageErrors.join('; '));
   } catch (e) {
     ok(`${title}: ran to the end`, false, e.message);
@@ -77,6 +84,9 @@ async function everydayUse({ lens, page, cdp, sw, mock, toggle }) {
   await lens.click(pill('Differs'));
   t = await lens.waitFor(/Suggested value/, 5000);
   ok('a pill opens its card', /On this page \| 247 g \| In the PIM \| 240 gr/.test(t));
+  // "Differs" alone does not say which side is wrong: the card adds what the PIM's history says.
+  t = await lens.waitFor(/has not been in the PIM/, 6000);
+  ok('the card says which side the difference may come from', /The PIM has held “240 gr” for the six months its history covers, and “247 g” was not its value in that time/.test(t) && /Check those before changing the PIM/.test(t), t.slice(-500));
   // A click made by a script (what a hostile page would do if it could reach the button) does nothing.
   const sendButton = (await lens.all(lens.button('Send suggestion')))[0];
   const { object } = await cdp.send('DOM.resolveNode', { backendNodeId: sendButton.backendNodeId });
@@ -226,6 +236,14 @@ async function signInAndOddPlaces(world) {
   await toggle();
   let t = await lens.waitFor(/Sign in to Bluestone PIM/, 12000);
   ok('signed out: the Lens says so and links to both Test PIMs', /Open demo-ui\.test/.test(t) && /Open app\.test/.test(t));
+  // Production is offered here. Choosing it puts Chrome's own question first; the test cannot answer it.
+  ok('signed out on Test: Production is offered, with what the Lens does there', /Use Production/.test(t) && /it does not save/.test(t) && !/Open app\.bluestonepim\.com/.test(t));
+  await lens.click(lens.button('Use Production'));
+  await sleep(2500);
+  t = await lens.text();
+  const chosen = await world.sw.evaluate(async () => (await chrome.storage.local.get('bsi:base'))['bsi:base']);
+  ok('"Use Production" reaches Chrome\'s permission question, and nothing moves before the answer',
+    !/Chrome only takes this from the extension itself/.test(t) && /Sign in to Bluestone PIM first/.test(t) && chosen !== 'https://app.bluestonepim.com' && world.onProduction().length === 0, `${chosen} | ${t.slice(0, 200)}`);
   state.mocks['app.test.bluestonepim.com'] = mock; // the user signs in on app.test
   await lens.click(lens.button('Try again'));
   await lens.waitFor(/from the PIM/, 12000);
@@ -371,14 +389,111 @@ async function pimFedPage({ lens, page, toggle }) {
   ok('with no number on the page, the PIM id in the address finds the product', /Group · 7001/.test(t) && /Found by the PIM product id in the page’s address/.test(t), t.slice(0, 400));
 }
 
+/** Production, with Chrome's permission for its address already given (the test cannot click Chrome's question). */
+async function production({ lens, page, cdp, sw, context, state, mock, prod, onProduction, toggle }) {
+  const settings = (n, tx, a) => n.nodeName === 'BUTTON' && a['aria-label'] === 'Settings';
+  // The user's stored choice is Edit: on Production that must not unlock anything.
+  await sw.evaluate(() => chrome.storage.local.set({ 'lens:mode': 'edit' }));
+  await toggle();
+  let t = await lens.waitFor(/Sign in to Bluestone PIM first/, 15000);
+  ok('signed out on Test, signed in on Production: the Lens stays on Test and asks to sign in', /Test environment/.test(t) && onProduction().length === 0, onProduction().join(', '));
+  await lens.click(lens.button('Use Production'));
+  t = await lens.waitFor(/10 from the PIM/, 15000);
+  ok('"Use Production" moves the Lens to Production', onProduction().some((r) => /^GET app\.bluestonepim\.com\/auth\/me/.test(r)));
+  ok('the box is marked PRODUCTION and says the Lens does not save there', /PRODUCTION \| Live data\. Suggestions only\./.test(t) && /On Production the Lens does not save/.test(t), t.slice(0, 300));
+  const edit = (await lens.all((n, tx, a) => n.nodeName === 'BUTTON' && a.role === 'radio' && tx === 'Edit'))[0];
+  const suggest = (await lens.all((n, tx, a) => n.nodeName === 'BUTTON' && a.role === 'radio' && tx === 'Suggest'))[0];
+  ok('Edit cannot be chosen, although it is the stored choice; Suggest is on',
+    !!edit && 'disabled' in lens.attrs(edit) && /switched off on Production/.test(lens.attrs(edit).title || '') && lens.attrs(suggest)['aria-checked'] === 'true', JSON.stringify(edit && lens.attrs(edit)));
+
+  // A card on Production: marked, and a suggestion form only.
+  await lens.click(pill('Differs'));
+  t = await lens.waitFor(/Suggested value/, 6000);
+  ok('a card on Production is marked Production and offers a suggestion, not a save', /Differs from the PIM \| Production/.test(t) && !/Review change|New value|Save to the PIM/.test(t), t.slice(0, 300));
+  await sleep(ARMED);
+  await lens.click(lens.button('Send suggestion'));
+  await lens.waitFor(/Choose who should get the task/, 4000);
+  const who = (await lens.all((n, tx, a) => n.nodeName === 'SELECT' && a['aria-label'] === 'Who gets suggestions'))[0];
+  await cdp.send('DOM.focus', { backendNodeId: who.backendNodeId });
+  await page.keyboard.type('Anna');
+  await sleep(500);
+  if (!/Goes to Anna Berg/.test(await lens.text())) await page.keyboard.press('Enter');
+  await lens.waitFor(/Goes to Anna Berg/, 3000);
+  await sleep(ARMED);
+  await lens.click(lens.button('Send suggestion'));
+  t = await lens.waitFor(/Sent to Anna Berg as a task/, 8000);
+  ok('a suggestion on Production becomes a task there, and only there', prod.db.tasks.length === 1 && mock.db.tasks.length === 0 && /Unit Weight/.test(prod.db.tasks[0].title));
+  ok('the task link goes to Production', (await lens.all((n, tx, a) => n.nodeName === 'A' && a.href === 'https://app.bluestonepim.com/tasks')).length === 1);
+  await lens.click(closeCard);
+
+  // The save messages themselves, sent to the worker as the on-page view would: refused there.
+  const refused = await sw.evaluate(async () => {
+    const page = { url: 'http://shop.example/book.html', host: 'shop.example', lang: 'nb', name: 'Fri', heading: 'Fri', ids: [{ kind: 'sku', value: '9788205593619' }], pairs: [{ label: 'Vekt', value: '247 g' }], blocks: [] };
+    const r = await service.handle({ type: 'lens:scan', page });
+    const at = { base: r.session.base, org: r.session.org.id, context: r.session.context.id };
+    const fact = r.items[0].fact;
+    const rest = { at, productId: r.product.id, factKey: fact.key, input: '247', target: 'owner' };
+    return { base: r.session.base, preview: await service.handle(Object.assign({ type: 'lens:preview' }, rest)), apply: await service.handle(Object.assign({ type: 'lens:apply' }, rest)) };
+  });
+  const writes = onProduction().filter((r) => /^(PUT|PATCH|DELETE) /.test(r) || (/^POST /.test(r) && !/\/(list|search|by-ids|tasks)(\/|$)|\/tasks/.test(r)));
+  ok('a save asked for directly is refused by the worker, and no product on Production was written to',
+    refused.base === 'https://app.bluestonepim.com' && refused.preview.ok === false && refused.apply.ok === false && /switched off on Production/.test(refused.apply.error) && writes.length === 0
+      && prod.calls.every((c) => /^\/tasks/.test(c.path)), JSON.stringify({ refused, writes }));
+
+  // The side panel on Production: marked, and no way to save from it.
+  await sw.evaluate(async () => {
+    const [tab] = await chrome.tabs.query({ url: 'http://shop.example/*' });
+    await capture(tab);
+  });
+  const panel = await context.newPage();
+  await panel.goto(`chrome-extension://${new URL(sw.url()).host}/panel/panel.html`);
+  const panelErrors = [];
+  panel.on('pageerror', (e) => panelErrors.push(String(e)));
+  panel.on('console', (m) => m.type() === 'error' && panelErrors.push(m.text()));
+  await panel.waitForFunction(() => /This page compared with the PIM/i.test(document.body.innerText), null, { timeout: 15000 }).catch(async () => {
+    throw new Error(`the panel shows: ${(await panel.evaluate(() => document.body.innerText)).replace(/\s+/g, ' ').slice(0, 400)} | errors: ${panelErrors.join('; ')}`);
+  });
+  const mark = await panel.evaluate(() => ({ text: document.getElementById('env').textContent, prod: document.getElementById('env').classList.contains('prod'), pim: document.getElementById('base').selectedOptions[0].textContent }));
+  ok('the side panel is marked Production too', mark.text === 'Production' && mark.prod && mark.pim === 'app (Production)', JSON.stringify(mark));
+  await panel.locator('tr.click', { hasText: 'Vekt' }).first().click();
+  await panel.waitForFunction(() => /Saving is switched off on Production/.test(document.body.innerText), null, { timeout: 10000 });
+  const panelText = await panel.evaluate(() => document.body.innerText);
+  ok('a traced value in the panel has no "Fix value" on Production', /Unit Weight/.test(panelText) && !/Fix value/.test(panelText), panelText.slice(0, 300).replace(/\s+/g, ' '));
+  await panel.close();
+  await page.bringToFront();
+
+  // Signing out on Production ends Production's session, not Test's.
+  await lens.click(settings);
+  t = await lens.waitFor(/Signed in as/, 5000);
+  ok('settings list the PIMs by name, Production among them', /demo-ui\.test/.test(t) && /app\.test/.test(t) && /app \(Production\)/.test(t), t.slice(-300));
+  await lens.click(lens.button('Sign out'));
+  await lens.waitFor(/Sign out of Bluestone PIM\?/, 5000);
+  await sleep(ARMED);
+  await lens.click(lens.button('Sign out'));
+  t = await lens.waitFor(/You are signed out of Bluestone PIM \(Production\)/, 25000);
+  const asked = state.requests.filter((r) => /\/logout$|\/op\/session\/end/.test(r));
+  ok('signing out on Production uses Production\'s own sign-out and sign-in service',
+    asked.join(' > ') === 'GET app.bluestonepim.com/logout > GET idp.bluestonepim.com/op/session/end > POST idp.bluestonepim.com/op/session/end/confirm', asked.join(' > '));
+  ok('signed out: the band stays, the Lens links to Production and offers Test', /PRODUCTION/.test(t) && /Open app\.bluestonepim\.com/.test(t) && /Use Test/.test(t), t.slice(0, 400));
+
+  // Back to Test: no question from Chrome, and the mark is gone.
+  await lens.click(lens.button('Use Test'));
+  t = await lens.waitFor(/Test environment/, 8000);
+  ok('"Use Test" goes back to Test, and the Production mark is gone', !/PRODUCTION/.test(t) && /Open demo-ui\.test/.test(t), t.slice(0, 300));
+}
+
 (async () => {
   console.log(`Browser: ${L.CHROME}`);
-  await scenario('Everyday use', {}, everydayUse);
-  await scenario('Worker restarts and page changes', {}, restartsAndPageChanges);
-  await scenario('Signing in, and odd places', { signedOut: true, page: 'book-drawer.html' }, signInAndOddPlaces);
-  await scenario('Signing out, and in as someone else', {}, signingOut);
-  await scenario('A page fed straight from the PIM', { page: 'product/64b7f0a1c2d3e4f5a6b7c8d9' }, pimFedPage);
-  await scenario('Pictures, once the image host is allowed', { allowHosts: ['http://img.shop.example/*'] }, pictures);
+  // ONLY=production (part of a scenario's title) runs just that one.
+  const only = (process.env.ONLY || '').toLowerCase();
+  const run = (title, options, body) => (!only || title.toLowerCase().includes(only) ? scenario(title, options, body) : null);
+  await run('Everyday use', {}, everydayUse);
+  await run('Worker restarts and page changes', {}, restartsAndPageChanges);
+  await run('Signing in, and odd places', { signedOut: true, page: 'book-drawer.html' }, signInAndOddPlaces);
+  await run('Signing out, and in as someone else', {}, signingOut);
+  await run('A page fed straight from the PIM', { page: 'product/64b7f0a1c2d3e4f5a6b7c8d9' }, pimFedPage);
+  await run('Pictures, once the image host is allowed', { allowHosts: ['http://img.shop.example/*'] }, pictures);
+  await run('Production, once its address is allowed', { signedOut: true, production: true, allowHosts: ['https://app.bluestonepim.com/*'] }, production);
   const failed = results.filter((r) => !r).length;
   console.log(`\n${results.length - failed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);

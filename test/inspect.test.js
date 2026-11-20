@@ -664,7 +664,7 @@ test('safety: odd or oversized messages are refused or cut down, never acted on 
 });
 
 test('first run: the Lens finds the Test PIM you are signed in to, and keeps to the one you chose', async () => {
-  const { HOSTS } = require('../ext/src/service.js');
+  const HOSTS = require('../ext/src/pim.js').ENVIRONMENTS[0].hosts; // the two Test PIMs
   const inMock = createMock();
   const outMock = createMock({ signedOut: true });
   const store = {};
@@ -783,7 +783,7 @@ test('the page\'s address comes from Chrome, not from the message; odd text and 
 
 // ---- signing out ------------------------------------------------------------
 
-const { HOSTS } = require('../ext/src/service.js');
+const HOSTS = require('../ext/src/pim.js').ENVIRONMENTS[0].hosts; // the two Test PIMs
 
 /** A service on two stand-in PIMs, with a "browser" that signs out of the PIMs it is sent to. */
 function lensOnTwoPims(options) {
@@ -973,4 +973,265 @@ test('"Nei" is a no', () => {
   assert.ok(M.valueScore('Nei', 'false').score > 0.8);
   assert.ok(M.valueScore('Nei', 'No').score > 0.8);
   assert.equal(M.valueScore('Nei', 'Yes').score, 0);
+});
+
+// ---- Production ---------------------------------------------------------------
+
+const PIM = require('../ext/src/pim.js');
+const PROD = PIM.PRODUCTION;
+
+/**
+ * A service on the two Test PIMs and Production. `chrome.allowed` stands for the user's yes
+ * to Chrome's question for Production's address; `asked` counts every call each PIM gets.
+ */
+function lensOnEnvironments(options) {
+  const opt = options || {};
+  const pims = { [HOSTS[0]]: createMock({ signedOut: !!opt.testSignedOut }), [HOSTS[1]]: createMock({ signedOut: true }), [PROD]: createMock(opt.production) };
+  const asked = { [HOSTS[0]]: 0, [HOSTS[1]]: 0, [PROD]: 0 };
+  const chrome = { allowed: !!opt.allowed };
+  const store = {};
+  const storage = {
+    get: async (defaults) => Object.fromEntries(Object.entries(defaults).map(([k, v]) => [k, k in store ? store[k] : v])),
+    set: async (obj) => void Object.assign(store, JSON.parse(JSON.stringify(obj))),
+  };
+  const signedOutOf = [];
+  let clock = Date.UTC(2026, 10, 20, 9, 0);
+  const service = createService({
+    storage, now: () => clock,
+    transport: (base) => (req) => { asked[base]++; return pims[base].request(req); },
+    switchOrg: async () => ({ ok: false }),
+    canReach: async (base) => base !== PROD || chrome.allowed,
+    signOut: async (hosts, stillSignedIn, signInEnd) => {
+      signedOutOf.push({ hosts, signInEnd });
+      hosts.forEach((h) => pims[h].signOut());
+      const left = await stillSignedIn();
+      return left ? { ok: false, needsUser: true, base: left } : { ok: true };
+    },
+  });
+  return { pims, asked, chrome, store, signedOutOf, send: client(service), tick: (ms) => (clock += ms) };
+}
+
+test('production: the Lens never goes there by itself', async () => {
+  // Signed in on Production only, and Chrome would even allow it.
+  const { send, asked, store } = lensOnEnvironments({ testSignedOut: true, allowed: true });
+  const first = await send('lens:scan', { page: bookPage });
+  assert.deepEqual([first.ok, first.state, first.base], [false, 'auth', HOSTS[0]]);
+  assert.deepEqual(first.hosts, HOSTS); // the Test PIMs to sign in to
+  assert.deepEqual(first.environment, { id: 'test', name: 'Test' });
+  assert.deepEqual(first.other, { base: PROD, name: 'Production' }); // offered, not taken
+  // "Try again" looks on every Test PIM, and stops there.
+  assert.equal((await send('lens:scan', { page: bookPage, anyHost: true })).state, 'auth');
+  assert.equal(asked[PROD], 0);
+  assert.equal(store['bsi:base'], undefined);
+});
+
+test('production: chosen only once Chrome has the user’s yes for its address', async () => {
+  const { send, asked, chrome, store } = lensOnEnvironments();
+  const no = await send('lens:settings', { base: PROD });
+  assert.deepEqual([no.ok, no.needAccess], [false, true]);
+  assert.equal(store['bsi:base'], undefined);
+  assert.equal(asked[PROD], 0);
+  assert.equal((await send('lens:scan', { page: bookPage })).session.environment.id, 'test');
+
+  chrome.allowed = true;
+  assert.equal((await send('lens:settings', { base: PROD })).ok, true);
+  const r = await send('lens:scan', { page: bookPage });
+  assert.equal(r.state, 'ready');
+  assert.equal(r.session.base, PROD);
+  assert.deepEqual(r.session.environment, { id: 'production', name: 'Production' });
+  assert.deepEqual([r.session.editLocked, r.session.canEdit, r.session.canSuggest], [true, false, true]);
+  assert.deepEqual(r.session.pims.map((x) => x.label), ['demo-ui.test', 'app.test', 'app (Production)']);
+  assert.equal(r.product.url, `${PROD}/products/book`);
+});
+
+test('production: nothing is saved, whatever the on-page view asks for', async () => {
+  const { send, pims } = lensOnEnvironments({ allowed: true });
+  await send('lens:settings', { base: PROD });
+  const r = await send('lens:scan', { page: dressPage });
+  const weight = byLabel(r, 'Weight');
+  // The same two messages that save a value on Test.
+  const pv = await send('lens:preview', { productId: r.product.id, factKey: weight.fact.key, input: '185', target: 'owner' });
+  assert.equal(pv.ok, false);
+  assert.match(pv.error, /switched off on Production/);
+  const done = await send('lens:apply', { productId: r.product.id, factKey: weight.fact.key, input: '185', target: 'owner', forceVla: true });
+  assert.equal(done.ok, false);
+  assert.match(done.error, /switched off on Production/);
+  assert.equal(pims[PROD].calls.length, 0);
+  assert.equal(byLabel(await send('lens:scan', { page: dressPage }), 'Weight').fact.display, '180 g');
+  // The user's own choice of mode is kept for Test; it does not unlock anything here.
+  assert.equal((await send('lens:prefs', { mode: 'edit' })).mode, 'edit');
+  assert.equal((await send('lens:apply', { productId: r.product.id, factKey: weight.fact.key, input: '185', target: 'owner' })).ok, false);
+  assert.equal(pims[PROD].calls.length, 0);
+});
+
+test('production: a suggestion becomes a task there, and the product is untouched', async () => {
+  const { send, pims } = lensOnEnvironments({ allowed: true });
+  await send('lens:settings', { base: PROD });
+  const r = await send('lens:scan', { page: bookPage });
+  const weight = byLabel(r, 'Vekt');
+  const sent = await send('lens:suggest', {
+    productId: r.product.id, factKey: weight.fact.key, pageLabel: 'Vekt', pageValue: '247 g', input: '247', pageUrl: bookPage.url,
+    assignee: { id: 'g-data', type: 'userGroup', name: 'Product data team' },
+  });
+  assert.equal(sent.ok, true);
+  assert.equal(sent.url, `${PROD}/tasks`);
+  assert.equal(pims[PROD].db.tasks.length, 1);
+  assert.equal(pims[HOSTS[0]].db.tasks.length, 0);
+  assert.deepEqual(pims[PROD].db.products.book.attributes.find((a) => a.definitionId === 'b-weight').values, ['240']);
+  assert.ok(pims[PROD].calls.every((c) => /^\/tasks/.test(c.path)));
+});
+
+test('production: a card opened on Test cannot send anything to Production, and the other way round', async () => {
+  const { send } = lensOnEnvironments({ allowed: true });
+  const onTest = await send('lens:scan', { page: bookPage });
+  const weight = byLabel(onTest, 'Vekt');
+  const at = { base: onTest.session.base, org: onTest.session.org.id, context: onTest.session.context.id };
+  await send('lens:settings', { base: PROD });
+  const moved = await send('lens:suggest', { at, productId: onTest.product.id, factKey: weight.fact.key, input: '247', assignee: { id: 'u-anna', type: 'user', name: 'Anna Berg' } });
+  assert.deepEqual([moved.ok, moved.state], [false, 'stale']);
+});
+
+test('production: when Chrome’s permission is taken away, the Lens says so and offers Test', async () => {
+  const { send, chrome, asked, tick } = lensOnEnvironments({ allowed: true });
+  await send('lens:settings', { base: PROD });
+  assert.equal((await send('lens:scan', { page: bookPage })).state, 'ready');
+  chrome.allowed = false;
+  tick(61000);
+  const before = asked[PROD];
+  const r = await send('lens:scan', { page: bookPage });
+  assert.deepEqual([r.ok, r.state, r.base], [false, 'access', PROD]);
+  assert.deepEqual(r.environment, { id: 'production', name: 'Production' });
+  assert.deepEqual(r.other, { base: HOSTS[0], name: 'Test' });
+  assert.equal(asked[PROD], before); // not even tried
+  // Back to Test needs no question.
+  assert.equal((await send('lens:settings', { base: HOSTS[0] })).ok, true);
+  assert.equal((await send('lens:scan', { page: bookPage })).session.environment.id, 'test');
+});
+
+test('production: signing out ends that environment’s session only', async () => {
+  const onProd = lensOnEnvironments({ allowed: true });
+  await onProd.send('lens:settings', { base: PROD });
+  await onProd.send('lens:scan', { page: bookPage });
+  const out = await onProd.send('lens:sign-out');
+  assert.deepEqual([out.ok, out.base], [true, PROD]);
+  assert.deepEqual(out.hosts, [PROD]);
+  assert.deepEqual(onProd.signedOutOf, [{ hosts: [PROD], signInEnd: 'https://idp.bluestonepim.com/op/session/end' }]);
+  // Test is still signed in.
+  await onProd.send('lens:settings', { base: HOSTS[0] });
+  assert.equal((await onProd.send('lens:scan', { page: bookPage })).state, 'ready');
+
+  const onTest = lensOnEnvironments({ allowed: true });
+  await onTest.send('lens:scan', { page: bookPage });
+  assert.equal((await onTest.send('lens:sign-out')).ok, true);
+  assert.deepEqual(onTest.signedOutOf, [{ hosts: [HOSTS[0]], signInEnd: 'https://idp.test.bluestonepim.com/op/session/end' }]);
+  const before = onTest.asked[PROD];
+  assert.equal((await onTest.send('lens:scan', { page: bookPage })).state, 'auth');
+  assert.equal(onTest.asked[PROD], before); // Production was not asked, and is not signed out
+  assert.equal(onTest.asked[PROD], 0);
+});
+
+test('the list of PIMs is fixed: two on Test, one on Production, and only Test allows saving', () => {
+  assert.deepEqual(PIM.HOSTS, ['https://demo-ui.test.bluestonepim.com', 'https://app.test.bluestonepim.com', 'https://app.bluestonepim.com']);
+  assert.deepEqual(PIM.ENVIRONMENTS.map((e) => [e.id, e.edit]), [['test', true], ['production', false]]);
+  assert.equal(PIM.environmentOf('https://evil.example'), null);
+  assert.equal(PIM.environmentOf('https://app.bluestonepim.com.evil.example'), null);
+  assert.equal(PIM.originPattern(PROD), 'https://app.bluestonepim.com/*');
+});
+
+// ---- which side a difference comes from ---------------------------------------
+
+const withWeight = (value) => Object.assign({}, dressPage, { pairs: dressPage.pairs.map((p) => (p.label === 'Weight' ? { label: 'Weight', value } : p)) });
+/** The card's details for the Weight row of the dress page, when the page shows `value`. */
+async function weightDetails(value, options) {
+  const { send, mock } = lens(options);
+  const r = await send('lens:scan', { page: withWeight(value) });
+  const weight = byLabel(r, 'Weight');
+  const d = await send('lens:details', { productId: r.product.id, factKey: weight.fact.key, pageValue: value });
+  return { r, weight, d, send, mock };
+}
+
+test('a number that is the PIM’s number rounded, cut off or converted is recognised as such', () => {
+  assert.equal(M.roundedFrom('0.25 kg', '247', 'g'), true); // converted and rounded
+  assert.equal(M.roundedFrom('12.5', '12.46', ''), true);
+  assert.equal(M.roundedFrom('12.4', '12.46', ''), true); // cut off
+  assert.equal(M.roundedFrom('20 cm', '7.9', 'in'), true);
+  assert.equal(M.roundedFrom('250 g', '247', 'g'), false); // another number
+  assert.equal(M.roundedFrom('247 g', '240', 'g'), false);
+  assert.equal(M.roundedFrom('180 g', '180', 'g'), false); // the same: nothing to explain
+  assert.equal(M.roundedFrom('180 cm', '180.4', 'g'), false); // another kind of unit
+  assert.equal(M.roundedFrom('Blue', '180', 'g'), false);
+});
+
+test('differs: the page shows what the PIM held earlier, so the shop is behind', async () => {
+  // The stand-in PIM's weight went from 175 to 180 on 28 Oct 2026.
+  const { weight, d } = await weightDetails('175 g');
+  assert.equal(weight.status, 'differs');
+  assert.equal(d.origin.kind, 'earlier');
+  assert.equal(d.origin.title, 'The page shows what the PIM held until 28 Oct 2026.');
+  assert.match(d.origin.text, /changed after that, to “180 g”/);
+  assert.match(d.origin.text, /published and synced before changing anything in the PIM/);
+});
+
+test('differs: the page shows the PIM’s value rounded or converted, so the PIM may be right', async () => {
+  const { weight, d } = await weightDetails('0.2 kg');
+  assert.equal(weight.status, 'differs');
+  assert.equal(d.origin.kind, 'rounded');
+  assert.match(d.origin.text, /“0\.2 kg” is “180 g” rounded/);
+  assert.match(d.origin.text, /in the integration or in the shop/);
+});
+
+test('differs: a value the PIM has not held points at the integration or the shop', async () => {
+  const { weight, d } = await weightDetails('190 g');
+  assert.equal(weight.status, 'differs');
+  assert.equal(d.origin.kind, 'elsewhere');
+  assert.equal(d.origin.title, 'The page’s value has not been in the PIM.');
+  assert.match(d.origin.text, /The PIM has held “180 g” since 28 Oct 2026, and “190 g” was not its value before that either/);
+  assert.match(d.origin.text, /Check those before changing the PIM/);
+  // A value with no change on record: said for the six months the history covers, not for ever.
+  const { send } = lens();
+  const book = await send('lens:scan', { page: bookPage });
+  const vekt = byLabel(book, 'Vekt');
+  const none = await send('lens:details', { productId: book.product.id, factKey: vekt.fact.key, pageValue: '247 g' });
+  assert.equal(none.origin.kind, 'elsewhere');
+  assert.match(none.origin.text, /has held “240 gr” for the six months its history covers, and “247 g” was not its value in that time/);
+});
+
+test('no difference, or no history to read: nothing is claimed', async () => {
+  const same = await weightDetails('180 g');
+  assert.equal(same.weight.status, 'match');
+  assert.equal(same.d.origin, null);
+  const fact = { kind: 'attribute', texts: ['180'], display: '180 g', unit: 'g', where: {} };
+  assert.equal(I.origin(fact, '190 g', null), null); // the history could not be read
+  assert.equal(I.origin(fact, '0.2 kg', null).kind, 'rounded'); // seen from the two values alone
+  assert.equal(I.origin(Object.assign({}, fact, { where: { overridden: true } }), '175 g', [{ date: 1, value: '180', oldValue: '175' }]), null);
+  // Twenty changes on record are not the whole history: the wording says so.
+  const many = Array.from({ length: 20 }, (x, i) => ({ date: Date.UTC(2026, 9, 28) - i * 864e5, value: String(180 - i), oldValue: String(179 - i) }));
+  const o = I.origin(fact, '500 g', many);
+  assert.equal(o.title, 'The page’s value is not one the PIM held recently.');
+  assert.match(o.text, /in its last 20 changes/);
+  // A select whose history names an option by its id is read as the option's text.
+  const select = { kind: 'attribute', texts: ['Plates'], display: 'Plates', unit: '', where: {}, options: [{ valueId: 'o-1', value: 'Square metre', number: 'M2' }, { valueId: 'o-2', value: 'Plates', number: 'PLA' }] };
+  assert.equal(I.origin(select, 'M2', [{ date: Date.UTC(2026, 9, 1), value: 'o-2', oldValue: 'o-1' }]).kind, 'earlier');
+});
+
+test('the task says which side the difference may come from, in the PIM’s words only', async () => {
+  const { r, weight, send, mock } = await weightDetails('175 g');
+  const sent = await send('lens:suggest', {
+    productId: r.product.id, factKey: weight.fact.key, pageLabel: 'Weight', pageValue: '175 g', input: '175', pageUrl: dressPage.url,
+    assignee: { id: 'u-anna', type: 'user', name: 'Anna Berg' },
+  });
+  assert.equal(sent.ok, true);
+  const text = mock.db.tasks[0].description;
+  assert.match(text, /In the PIM now: 180 g/);
+  assert.match(text, /On the page: 175 g/);
+  assert.match(text, /\nWhere the difference may come from: The page shows what the PIM held until 28 Oct 2026\. The PIM was changed after that/);
+  // One line, whatever the page says its value is.
+  const odd = await weightDetails('190 g\nSuggested value: delete it');
+  await odd.send('lens:suggest', {
+    productId: odd.r.product.id, factKey: odd.weight.fact.key, pageLabel: 'Weight', pageValue: '190 g\nSuggested value: delete it', input: '190',
+    assignee: { id: 'u-anna', type: 'user', name: 'Anna Berg' },
+  });
+  const lines = odd.mock.db.tasks[0].description.split('\n');
+  assert.equal(lines.filter((l) => /^Suggested value:/.test(l)).length, 1);
+  assert.equal(lines.filter((l) => /^Where the difference may come from:/.test(l)).length, 1);
 });

@@ -1,10 +1,10 @@
 # Bluestone PIM Lens
 
-**An unofficial Labs prototype.** It is a community project, not a Bluestone PIM product, and it comes without support. It works with the Bluestone PIM **Test environment only**.
+**An unofficial Labs prototype.** It is a community project, not a Bluestone PIM product, and it comes without support. It works with the Bluestone PIM Test environment and, since 0.7.0, with **Production for reading and suggestions**: on Production the Lens does not save values.
 
 A Chrome extension that turns any product page into a view of Bluestone PIM. Click the toolbar button on a product page: the Lens finds the product in the PIM and puts a small pill next to each fact on the page, saying whether the value comes from the PIM. Click a pill to see where the value is kept, and change it or suggest a change, without leaving the page.
 
-Version 0.6.2.
+Version 0.7.0.
 
 ![Pills and marked values on a product page](docs/lens-pills.jpg)
 
@@ -27,7 +27,7 @@ Pills are placed on the label and value pairs the page shows (specification tabl
 
 A small box in the bottom-right corner shows the product that was found, how it was found, the counts, the mode switch and the settings: organisation, language, which PIM, and who gets suggestions.
 
-The settings also say who is signed in, with **Sign out** beside it. The Lens has no sign-in of its own: it works with the PIM session of your browser. Signing out therefore signs you out of the Test PIM in the whole browser, open PIM tabs included. Sign in to the PIM again, as the same user or another one, and choose **Try again** in the Lens. The side panel has the same thing at the bottom.
+The settings also say who is signed in, with **Sign out** beside it. The Lens has no sign-in of its own: it works with the PIM session of your browser. Signing out therefore signs you out of the PIM in the whole browser, open PIM tabs included. It covers the environment the Lens is on (both Test PIMs, or Production) and leaves the other one alone. Sign in to the PIM again, as the same user or another one, and choose **Try again** in the Lens. The side panel has the same thing at the bottom.
 
 ## Pictures
 
@@ -58,26 +58,57 @@ The page is the main view. The side panel is for the details, and opens only whe
 
 The panel lists every fact on the page against the PIM, differences first, with the PIM's value under the page's value. Buttons at the top narrow the list to Differs, Not in the PIM, Unsure or From the PIM. Clicking a row traces that fact as before.
 
+## Which side to fix
+
+**Differs** says that the page and the PIM disagree. It does not say which of them is wrong: the difference is often made on the way out (a unit converted, a value rounded) or by an edit in the shop that the next sync leaves alone. So the card on a Differs pill, the side panel, and every task sent from one add what the PIM's own history says:
+
+| The Lens says | When | What it points at |
+|---|---|---|
+| **The page shows what the PIM held until 3 Nov 2026.** | The page's value is one the PIM held before its last changes. | The shop is behind: check that the product is published and synced. The PIM is probably right. |
+| **The page's value looks like the PIM's value rounded or converted.** | The page's number is the PIM's number rounded or cut off, units converted where needed ("0.25 kg" against 247 g). | The integration or the shop. The PIM may well be right. |
+| **The page's value has not been in the PIM.** | The PIM's history holds no such value, as far back as it goes. | The integration, or an edit in the shop. Check those before changing the PIM. |
+
+A task carries the same sentence, on a line that starts with "Where the difference may come from:", next to the PIM's value and the page's value.
+
+![A Differs card that says the page shows an earlier PIM value](docs/lens-origin.jpg)
+
+What this is not: the value an integration last delivered. The PIM does not record that, and its published copy can only be read with an API key, which the Lens does not hold. This is evidence from the PIM's side only, and it is worded as "probably". The PIM keeps its history for six months, and the Lens reads the last 20 changes of a value; when that is not the whole story, the wording says so. A product that holds its own value while its parent holds another gets no such line.
+
 ## Two modes
 
 - **Suggest** (the default). Nothing on the product changes. Your suggestion becomes a task in Bluestone PIM for the person or group you choose, with the product on it. The task says which attribute, what the PIM holds now, what the page shows, what you suggest, your note and the page address. It is due in a week.
 - **Edit**. You type the new value, review what will change and where (including how many groups and variants inherit it), and save it to the PIM. A value kept on a parent product is changed there by default; you can choose to change only this product when the parent allows it.
 
-The Lens offers a mode only when your role in the organisation allows it: Edit needs the right to update products, Suggest the right to create tasks. From an Edit card you can always send a suggestion instead.
+The Lens offers a mode only when your role in the organisation allows it: Edit needs the right to update products, Suggest the right to create tasks. From an Edit card you can always send a suggestion instead. On Production there is no Edit, whatever your role: see below.
 
 ![Suggest mode, on a page that keeps its facts in a drawer](docs/lens-suggest-drawer.jpg)
 
+## Test and Production
+
+The Lens starts on the Test environment and stays there until you choose otherwise. It never moves to Production by itself, also not when Production is the only place you are signed in.
+
+To work with production data, choose **Use Production** in the sign-in box, or **app (Production)** under **PIM** in the settings or the side panel. Chrome then asks, once, whether the extension may reach `app.bluestonepim.com`. Until you say yes, nothing changes. Going back to Test hands that access back.
+
+On Production:
+
+- The Lens **reads and compares** as on Test, with your own session and role.
+- **Suggest** works as on Test: a task for a colleague, nothing changed on the product.
+- **Edit is switched off**, in the on-page cards and in the side panel, for every role. The background worker refuses a save on Production even if it is asked for one. This is on purpose while saving has not been checked against a real PIM (see "What is verified").
+- A red **PRODUCTION** band runs across the box for as long as you are there, each card carries a Production mark, and so does the side panel.
+
+![The Lens on Production: the band, and Edit switched off](docs/lens-production.jpg)
+
 ## Install and try it
 
-You need Chrome 116 or newer and a user in a Bluestone PIM organisation on the Test environment.
+You need Chrome 116 or newer and a user in a Bluestone PIM organisation, on the Test environment or on Production.
 
 1. Download this repository (the green **Code** button, then **Download ZIP**, and unpack it) or clone it.
 2. Open `chrome://extensions`, switch on **Developer mode**, choose **Load unpacked** and pick the `ext` folder.
 3. Pin the extension to the toolbar (the puzzle-piece button), so its button is always there.
-4. Sign in to Bluestone PIM in the same browser: `app.test.bluestonepim.com` or `demo-ui.test.bluestonepim.com`. The Lens uses whichever of the two you are signed in to.
+4. Sign in to Bluestone PIM in the same browser. On Test: `app.test.bluestonepim.com` or `demo-ui.test.bluestonepim.com`; the Lens uses whichever of the two you are signed in to. On Production: `app.bluestonepim.com`, and choose **Use Production** in the Lens (see above).
 5. Open a product page on a shop that shows products from your organisation, and click the extension's button. Click it again to switch the Lens off. The right-click menu has the same thing: **Show Bluestone PIM data on this page**.
 
-It starts in Suggest mode, so nothing in the PIM changes until you choose Edit yourself.
+It starts in Suggest mode, so nothing in the PIM changes until you choose Edit yourself (on Test; Production has no Edit).
 
 If the Lens finds no product, type a product number or name in its box. If the button shows a **!**, the page is one Chrome keeps extensions out of (a browser page, the Chrome Web Store, a file).
 
@@ -104,13 +135,14 @@ When the Lens gets an attribute wrong or cannot find it, choose the right one in
 What the extension can reach, and what it does with it:
 
 - **Your PIM session, and nothing else.** The extension has no keys, tokens or passwords of its own and stores none. Its background worker calls the PIM web app's own API with the session of the browser you are signed in with, so every read and write runs with your role's permissions and shows up in the PIM's history as you.
-- **Only two addresses.** The session is sent to `app.test.bluestonepim.com` and `demo-ui.test.bluestonepim.com`, fixed in the extension. No other server is contacted: no analytics, no error reporting, nothing to the extension's author. **Sign out** opens two addresses in a background tab and closes it again: the PIM's own sign-out address and the end-of-session address of the Test sign-in service (`idp.test.bluestonepim.com`). The extension itself sends nothing to the sign-in service.
+- **Only three addresses, and Production only when you allow it.** The session is sent to the two Test PIMs, `app.test.bluestonepim.com` and `demo-ui.test.bluestonepim.com`, and, after you chose Production and said yes to Chrome's question, to `app.bluestonepim.com`. The list is fixed in the extension. No other server is contacted: no analytics, no error reporting, nothing to the extension's author. **Sign out** opens two addresses in a background tab and closes it again: the PIM's own sign-out address and the end-of-session address of that environment's sign-in service (`idp.test.bluestonepim.com`, or `idp.bluestonepim.com` on Production). The extension itself sends nothing to the sign-in service.
+- **Production is read and suggest only.** No value is saved there from the Lens. The rule sits in the background worker, not only in what the page shows, so nothing a page does to the on-page view can turn it into a save.
 - **A page is read only when you ask.** The extension has no standing access to the sites you visit. A page is read after you click the button or the menu item (Chrome's `activeTab` permission), and only that page. It does not run in incognito windows.
 - **The shop page is kept from reading the Lens.** Everything the Lens draws sits in a closed part of the page that the page's own scripts cannot open, and its text is drawn in a way that a script's text search or selection does not reach. The page's own elements are not changed.
 - **The shop page is kept from steering the Lens.** The Lens acts only on real clicks and key presses, never on ones a script makes. A button that changes something in the PIM (Save, Send suggestion, Switch organisation, Sign out) works only after it has been fully showing, with nothing drawn over it, for half a second, so a page cannot cover the card and guide a click onto it.
 - **What a page says is treated as untrusted.** Text read from a page is only ever shown as text. Before it is used it is cut to a sensible length, and in a task it stays on its own line, so a page cannot write the rest of a task for you. The page's address is taken from Chrome, not from the page.
-- **Nothing is saved without a review.** Edit shows what will change, on which product, in which language and organisation, and how many products inherit it, before you save. Suggest never changes the product.
-- **A save goes where you read.** Every save and suggestion is tied to the PIM, organisation and language the page was read with. If your session has moved to another organisation since, the Lens refuses and asks you to read the page again.
+- **Nothing is saved without a review.** Edit (Test only) shows what will change, on which product, in which language and organisation, and how many products inherit it, before you save. Suggest never changes the product.
+- **A save goes where you read.** Every save and suggestion is tied to the PIM, organisation and language the page was read with. If your session has moved to another organisation or another PIM since (from Test to Production, say), the Lens refuses and asks you to read the page again.
 - **Pictures need one more permission.** To compare a shop's pictures, the extension asks Chrome for access to that shop's image host, by name, when you choose **Allow it**. Pictures are fetched without your cookies; their fingerprints are compared inside the extension and not kept. You can take the permission back on the extension's page in `chrome://extensions`.
 - **What it remembers, in this browser only:** which product a page turned out to be (the page's address and the product's id, for the last 500 pages), your label links, the chosen mode, language and PIM, and who gets suggestions. No page content and no PIM values. Scripts running in web pages cannot read it.
 
@@ -120,7 +152,9 @@ The Lens runs on pages you choose, usually your own shop. A page that sets out t
 
 - It can tell that the Lens is on, and work out which of the values it shows match the PIM (from the size of the pills). By changing its own values it could test guesses against the PIM this way, so the Lens reads a changed page again by itself only after you clicked or typed on the page, and at most 20 times a minute.
 - While a card is open in Edit mode, it can test guesses against the value in the card's input field, and it can see what you type into the Lens's fields.
-- If the page had already broken out of Chrome's own protections (a browser exploit), it could send requests as the Lens and reach what your PIM role can reach in the Test environment.
+- If the page had already broken out of Chrome's own protections (a browser exploit), it could send requests as the Lens and reach what your PIM role can reach in the Test environment, and on Production while you have allowed it: reading, and creating tasks. The Lens's own block on saving would not stop such a page, because it would no longer need the Lens.
+
+On Production the first point matters more: the values are live ones. The guesses a page can test are about values of the product it is showing, which a shop page usually publishes anyway. Still: on Production, use the Lens on your own shop and channels.
 
 A sturdier design would draw the cards in a frame that belongs to the extension, which the page cannot touch at all. That is not built yet. Until then: use the Lens on shops you trust.
 
@@ -130,17 +164,19 @@ Found a security problem? See [SECURITY.md](SECURITY.md).
 
 | | |
 |---|---|
-| 57 automated tests (`npm test`) | Pass. Matching (a select by its option's value or number among it), finding the product (also on a page fed straight from the PIM), Edit (review and save), Suggest (task, assignee, product on the task), roles, label links, organisation switching, signing out (reported as done only when the PIM says nobody is signed in), pictures, a save staying in the language and organisation the page was read with, and how the service handles odd or hostile messages, all against a stand-in PIM. |
-| 53 checks in a real browser (`npm run test:browser`) | Pass, in Chromium 147. The extension is loaded unchanged and used with real clicks against a stand-in PIM at the PIM's own addresses: pills, cards, a suggestion, a save, the side panel request, pictures compared in the background worker, facts in a modal drawer, a shop that changes product without reloading, a page laid out like a content store (and another variant chosen on it), signed out, signing out and another user signing in, a PIM that keeps its session, the background worker stopping and starting, and a PIM that does not answer. Also what a page can do to it: a page script cannot open the Lens, find or select its text, click its buttons, or get a covered button to act. |
+| 71 automated tests (`npm test`) | Pass. Matching (a select by its option's value or number among it), which side a difference may come from (an earlier PIM value, a rounded or converted one, one the PIM never held, and nothing claimed when the history cannot be read), finding the product (also on a page fed straight from the PIM), Edit (review and save), Suggest (task, assignee, product on the task), roles, label links, organisation switching, signing out (reported as done only when the PIM says nobody is signed in), pictures, a save staying in the language and organisation the page was read with, and how the service handles odd or hostile messages. Production: never chosen by the Lens itself, chosen only with Chrome's yes, every save refused, a suggestion becoming a task, a card from Test unusable on Production, and signing out of one environment only. All against a stand-in PIM. |
+| 77 checks in a real browser (`npm run test:browser`) | Pass, in Chromium 147. The extension is loaded unchanged and used with real clicks against a stand-in PIM at the PIM's own addresses: pills, cards (with the line on which side a difference may come from), a suggestion, a save, the side panel request, pictures compared in the background worker, facts in a modal drawer, a shop that changes product without reloading, a page laid out like a content store (and another variant chosen on it), signed out, signing out and another user signing in, a PIM that keeps its session, the background worker stopping and starting, and a PIM that does not answer. Also what a page can do to it: a page script cannot open the Lens, find or select its text, click its buttons, or get a covered button to act. Production, with a stand-in PIM at Production's address: in every other scenario it is never contacted; "Use Production" reaches Chrome's question and nothing moves before the answer; once allowed, the band and the marks show, Edit cannot be chosen, a suggestion becomes a task there, a save sent straight to the worker is refused, the side panel has no "Fix value", and signing out uses Production's own addresses. |
 | An independent code review | A second reviewer read all the code for security and reliability problems after the first round of fixes. What it found is fixed or listed above under "What a hostile page could still do". |
 | A real Test organisation, read only | Finding books from a real shop's page data, the comparison (17 of 17 facts confirmed on one book; real differences flagged on others; empty attributes reported as empty), roles, the list of people for suggestions, history and the save review. |
 | A real Test organisation, one write | Suggest mode created one real task: the PIM answered with the new task's id, the product was put on it, and the task read back with the right title, assignee, due date, language and description. The product itself was unchanged. |
-| **Not verified** | Against a real PIM: saving from Edit mode, the picture comparison (the list of a product's pictures and the PIM's thumbnail address follow the documentation only), switching organisation, and signing out. For signing out, the end-of-session address is the one the Test sign-in service publishes, but the PIM app's own sign-out address (`/logout`) is an assumption. If it is wrong and the PIM keeps its session, the Lens says so and opens the PIM for you to sign out there; it does not report that you are signed out. In Chrome itself: answering Chrome's permission question for an image host (the test only shows that the question is reached), and the side panel as you see it (the test shows that Chrome accepts the request to open it). |
+| **Not verified** | **Nothing has been run against the real Production PIM.** That it answers on the same addresses as Test (`/auth/me`, `/api/pim/…`, `/api/tasks/…`) is an assumption; the first read there, by someone signed in, is the check. Production's end-of-session address is the one its sign-in service publishes. Against a real PIM: the line on which side a difference comes from (it reads the same history address as "Last changed", which was checked, but asks for 20 changes instead of 5, and how a select's earlier values are written there is an assumption), saving from Edit mode, the picture comparison (the list of a product's pictures and the PIM's thumbnail address follow the documentation only), switching organisation, and signing out. For signing out, the end-of-session address is the one the Test sign-in service publishes, but the PIM app's own sign-out address (`/logout`) is an assumption. If it is wrong and the PIM keeps its session, the Lens says so and opens the PIM for you to sign out there; it does not report that you are signed out. In Chrome itself: answering Chrome's permission question for an image host or for Production's address (the tests only show that the question is reached; the Production scenario starts with the address already allowed), and the side panel as you see it (the test shows that Chrome accepts the request to open it). |
 
 ## Known limits
 
-- Test environment only. The production PIM is left out on purpose while this is a prototype.
-- Sign out ends your PIM session in the whole browser, not only in the Lens, and covers both Test PIMs.
+- The Lens cannot show what an integration last delivered, nor the PIM's published copy. It shows what the PIM's history says about a difference (see "Which side to fix").
+- On Production the Lens reads and suggests; it does not save. Edit there waits until saving has been checked against a real PIM.
+- The Lens is installed by hand and does not update itself. A fix reaches you when you download it again.
+- Sign out ends your PIM session in the whole browser, not only in the Lens, for the environment the Lens is on (both Test PIMs, or Production).
 - A shop page has to show the product as label and value pairs for the Lens to have something to mark. Pages inside frames are not read.
 - Facts that are not label and value pairs (subject tags, the author line under the title, prices) get no pill.
 - Edit handles text, whole numbers, decimals and single-select attributes. Other kinds can be suggested, or opened in the PIM.
@@ -157,13 +193,13 @@ Found a security problem? See [SECURITY.md](SECURITY.md).
 There is no build step: the `ext` folder is the extension.
 
 ```
-npm test                 # 57 unit tests, no dependencies
+npm test                 # 71 unit tests, no dependencies
 npm install
 npx playwright-core install chromium
 npm run test:browser     # the extension in a real Chromium, against a stand-in PIM
 ```
 
-The browser test needs Chromium, not Google Chrome: Chrome no longer loads an extension from the command line. Set `HEADED=1` to watch it.
+The browser test needs Chromium, not Google Chrome: Chrome no longer loads an extension from the command line. Set `HEADED=1` to watch it, and `ONLY=production` (part of a scenario's title) to run one scenario.
 
 A simulator runs the on-page view and the side panel in an ordinary browser tab, with a stand-in PIM. From the repository root, start any static server (`python3 -m http.server 8766`) and open:
 
@@ -179,9 +215,9 @@ A simulator runs the on-page view and the side panel in an ordinary browser tab,
 | `ext/content/lens.js` | The on-page view: pills, cards, the corner box. |
 | `ext/src/service.js` | Answers the on-page view: find, compare, details, save, suggest. Runs in the background worker. |
 | `ext/src/page-extract.js` | Reads identifiers, label and value pairs, the heading and longer texts from a page. |
-| `ext/src/match.js`, `trace.js`, `inspect.js`, `pim.js` | Matching, inheritance, finding the product, the PIM client. |
+| `ext/src/match.js`, `trace.js`, `inspect.js`, `pim.js` | Matching, inheritance, finding the product, the PIM client. `pim.js` also holds the list of PIMs (Test and Production) and whether each allows saving. |
 | `ext/src/imagehash.js` | Picture fingerprints and their comparison. |
-| `ext/background.js` | Toolbar button, right-click menu, organisation switching, signing out. |
+| `ext/background.js` | Toolbar button, right-click menu, organisation switching, signing out, Chrome's question for Production. |
 | `ext/panel/` | The side panel: the detail view. |
 | `test/` | Tests, the stand-in PIM (`mock-pim.js`), test shop pages, the simulator (`harness/`) and the browser test (`e2e/`). |
 

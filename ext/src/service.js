@@ -18,7 +18,10 @@
   const I = need('inspect', './inspect.js');
   const M_IMG = need('imagehash', './imagehash.js');
 
-  const HOSTS = ['https://demo-ui.test.bluestonepim.com', 'https://app.test.bluestonepim.com'];
+  // Test and Production. The first one (a Test PIM) is where a first run starts.
+  const HOSTS = P.HOSTS;
+  const envOf = (base) => P.environmentOf(base) || P.ENVIRONMENTS[0];
+  const LOCKED = 'Saving is switched off on Production in this version of the Lens. Send a suggestion instead.';
   const DAY = 24 * 3600 * 1000;
   const MAX_VALUE = 10000; // characters in one value sent to the PIM
   const MAX_SRC = 300000; // characters in a picture address (an inline picture can be long)
@@ -126,18 +129,25 @@
     }
     const baseUrl = async () => (await chosenBase()) || HOSTS[0];
 
+    /** Whether Chrome lets the Lens reach this PIM. Production is allowed by the user, once, when they choose it. */
+    const canReach = async (base) => envOf(base).id === 'test' || !deps.canReach || !!(await deps.canReach(base));
+    const noAccess = (base) => new P.PimError(`Chrome has not been told to let the Lens reach ${envOf(base).name}.`, { kind: 'access' });
+
     /**
      * The signed-in user on `base`. When nobody is signed in there and the user has
      * not picked a PIM yet (or asks to look again), the other Test PIM is tried too,
-     * so a first run works whichever of the two the user is signed in to.
+     * so a first run works whichever of the two the user is signed in to. Only PIMs of
+     * the same environment are tried: the Lens never moves to Production (or away from
+     * it) by itself.
      */
     async function signIn(base, lookElsewhere) {
+      if (!(await canReach(base))) throw noAccess(base);
       const pim = P.createPim(deps.transport(base));
       try {
         return { base, pim, me: await pim.me() };
       } catch (e) {
         if (!lookElsewhere || (e.kind !== 'auth' && e.kind !== 'network')) throw e;
-        for (const other of HOSTS) {
+        for (const other of envOf(base).hosts) {
           if (other === base) continue;
           try {
             const otherPim = P.createPim(deps.transport(other));
@@ -162,10 +172,13 @@
       const contexts = await pim.contexts();
       const perms = me.permissions && typeof me.permissions === 'object' ? me.permissions : null;
       const has = (action, re) => !perms || (perms[action] || []).some((r) => re.test(String(r)));
+      const env = envOf(base);
       sessionCache = {
-        base, pim, me, contexts, at: now(),
+        base, pim, me, contexts, at: now(), env,
         org: { id: me.organization, name: me.organizationName || me.organization },
-        canEdit: has('UPDATE', /^(PRODUCTS?|ATTRIBUTES?)$/),
+        // Where saving is switched off, no role can edit.
+        editLocked: !env.edit,
+        canEdit: env.edit && has('UPDATE', /^(PRODUCTS?|ATTRIBUTES?)$/),
         canSuggest: has('ADD', /^TASKS?$/),
       };
       return sessionCache;
@@ -210,7 +223,10 @@
       contexts: s.contexts.map((c) => ({ id: c.id, name: c.name || c.id })),
       canEdit: s.canEdit,
       canSuggest: s.canSuggest,
+      editLocked: s.editLocked,
+      environment: { id: s.env.id, name: s.env.name },
       hosts: HOSTS,
+      pims: HOSTS.map((u) => ({ base: u, label: P.pimLabel(u) })),
     });
 
     async function idAttributes(s) {
@@ -452,12 +468,17 @@
       return { loaded, fact };
     }
 
+    /** Evidence on which side a difference comes from, as { kind, title, text }, or null. */
+    const briefOrigin = (o) => (o ? { kind: o.kind, title: clip(o.title, 200), text: clip(o.text, 600) } : null);
+
     async function details(msg) {
       const s = await reopen(msg);
       const { loaded, fact } = await factOf(s, msg);
       const d = await I.details(s.pim, loaded.chain, fact, s.context.id);
       return {
         ok: true,
+        // Only for a value the page shows differently: where the difference may come from.
+        origin: briefOrigin(I.origin(fact, oneLine(msg.pageValue, 500), d.lastChangeError ? null : d.changes || null)),
         lastChange: d.lastChange
           ? { date: d.lastChange.date, userName: d.lastChange.userName || '', value: clip(plain(d.lastChange.value), 120), oldValue: clip(plain(d.lastChange.oldValue), 120), wholeProduct: !!d.lastChange.wholeProduct }
           : null,
@@ -469,6 +490,7 @@
     /** Check a new value and say what saving it would touch. Nothing is written. */
     async function preview(msg) {
       const s = await reopen(msg);
+      if (s.editLocked) return { ok: false, error: LOCKED };
       const { loaded, fact } = await factOf(s, msg);
       const target = msg.target === 'holder' ? 'holder' : 'owner';
       const v = I.validateFix(fact, text(msg.input, MAX_VALUE + 1), target);
@@ -488,6 +510,8 @@
 
     async function apply(msg) {
       const s = await reopen(msg, true);
+      // Checked here, in the worker: it does not depend on what the on-page view offers.
+      if (s.editLocked) return { ok: false, error: LOCKED };
       if (!s.canEdit) return { ok: false, error: 'Your role in this organisation cannot change products. Send a suggestion instead.' };
       const { loaded, fact } = await factOf(s, msg);
       const done = await I.applyFix(s.pim, loaded.chain, fact, {
@@ -647,6 +671,17 @@
       const suggested = lines(msg.input, 2000);
       const note = lines(msg.note, 1000);
       if (!suggested && !note) return { ok: false, error: 'Type the value you suggest, or a note.' };
+      // What the PIM's history says about the difference, so the colleague sees which side to
+      // look at before changing a PIM value that may be right. Left out when it cannot be read.
+      let evidence = null;
+      if (fact && fact.kind === 'attribute' && !picture && pageValue) {
+        try {
+          const query = Object.assign({ definitionId: fact.definitionId }, fact.contextAware === false ? {} : { context: s.context.id });
+          evidence = I.origin(fact, pageValue, await s.pim.changes(owner.id, query, 20));
+        } catch (e) {
+          evidence = I.origin(fact, pageValue, null); // rounding can be seen without the history
+        }
+      }
 
       const title = clip(`Suggested change: ${what} on ${product.name || product.number}`, 140);
       const body = [
@@ -656,6 +691,7 @@
         picture ? (assetName ? `The same picture in the PIM: ${assetName}` : 'No picture of this product in the PIM looks like it.') : '',
         fact ? `In the PIM now: ${oneLine(plain(fact.display), 300) || '(empty)'}` : '',
         !picture && pageValue ? `On the page: ${clip(pageValue, 300)}` : '',
+        evidence ? `Where the difference may come from: ${oneLine(`${evidence.title} ${evidence.text}`, 700)}` : '',
         suggested ? `Suggested value: ${suggested}` : '',
         note ? `Note: ${note}` : '',
         pageUrl ? `Page: ${pageUrl}` : '',
@@ -743,11 +779,15 @@
 
     /**
      * Ends the browser's PIM session, so that someone else can sign in. The Lens has
-     * no session of its own. Both Test PIMs are signed out of (they share one sign-in),
-     * and it counts as done only when the PIM itself says nobody is signed in.
+     * no session of its own. Every PIM of the chosen environment is signed out of (the
+     * two Test PIMs share one sign-in; Production has its own, and is left alone when
+     * you sign out of Test, and the other way round). It counts as done only when the
+     * PIM itself says nobody is signed in.
      */
     async function signOut() {
       const base = await baseUrl();
+      const env = envOf(base);
+      const mine = env.hosts; // of this environment only
       if (!deps.signOut) return { ok: false, base, error: 'Could not sign out. Open the PIM and sign out there.' };
       // true or false, or null when the PIM could not be asked.
       const signedIn = async (host) => {
@@ -758,28 +798,31 @@
           return e && e.kind === 'auth' ? false : null;
         }
       };
-      const before = await Promise.all(HOSTS.map(signedIn));
+      const before = await Promise.all(mine.map(signedIn));
       let after = [];
       let r = null;
       try {
-        r = await deps.signOut(HOSTS.filter((h, i) => before[i] !== false), async () => {
-          after = await Promise.all(HOSTS.map(signedIn));
-          return HOSTS.find((h, i) => after[i] === true) || null;
-        });
+        r = await deps.signOut(mine.filter((h, i) => before[i] !== false), async () => {
+          after = await Promise.all(mine.map(signedIn));
+          return mine.find((h, i) => after[i] === true) || null;
+        }, env.signInEnd);
       } catch (e) {
         r = null; // the browser could not do it: said below, in words a person can use
       }
       reset();
       if (r && r.ok) {
-        if (after[HOSTS.indexOf(base)] !== false) return { ok: false, base, error: 'Bluestone PIM could not be reached to check that you are signed out. Open the PIM to see.' };
-        return { ok: true, base, hosts: HOSTS };
+        if (after[mine.indexOf(base)] !== false) return { ok: false, base, error: 'Bluestone PIM could not be reached to check that you are signed out. Open the PIM to see.' };
+        const other = P.ENVIRONMENTS.find((x) => x.id !== env.id);
+        return { ok: true, base, hosts: mine, environment: { id: env.id, name: env.name }, other: other ? { base: other.hosts[0], name: other.name } : null };
       }
-      if (r && r.needsUser) return { ok: false, needsUser: true, base: HOSTS.includes(r.base) ? r.base : base, error: 'The PIM did not sign you out. It is open in a tab now: click your name there, then Sign out.' };
+      if (r && r.needsUser) return { ok: false, needsUser: true, base: mine.includes(r.base) ? r.base : base, error: 'The PIM did not sign you out. It is open in a tab now: click your name there, then Sign out.' };
       return { ok: false, base, error: 'Could not sign out. Open the PIM and sign out there.' };
     }
 
     async function settings(msg) {
       if (msg.base && HOSTS.includes(msg.base)) {
+        // Production is chosen only once Chrome has the user's yes for its address.
+        if (!(await canReach(msg.base))) return { ok: false, needAccess: true, error: `Chrome has not been told to let the Lens reach ${envOf(msg.base).name}.` };
         await set('bsi:base', msg.base);
         sessionCache = null;
         loadedCache.clear();
@@ -833,9 +876,20 @@
         return await route(msg);
       } catch (e) {
         const base = await baseUrl().catch(() => HOSTS[0]);
+        const env = envOf(base);
+        // What the on-page box needs to offer a way on: this environment's PIMs to sign in
+        // to, and the other environment to choose instead.
+        const where = () => {
+          const other = P.ENVIRONMENTS.find((x) => x.id !== env.id);
+          return { base, hosts: env.hosts, environment: { id: env.id, name: env.name }, other: other ? { base: other.hosts[0], name: other.name } : null };
+        };
         if (e && e.kind === 'auth') {
           sessionCache = null;
-          return { ok: false, state: 'auth', base, hosts: HOSTS, error: 'You are not signed in to Bluestone PIM.' };
+          return Object.assign({ ok: false, state: 'auth', error: 'You are not signed in to Bluestone PIM.' }, where());
+        }
+        if (e && e.kind === 'access') {
+          sessionCache = null;
+          return Object.assign({ ok: false, state: 'access', error: e.message }, where());
         }
         if (e && e.kind === 'stale') {
           reset();

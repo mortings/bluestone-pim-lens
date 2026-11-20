@@ -11,6 +11,7 @@ Problems in Bluestone PIM itself are not for this repository: report those to Bl
 ## What the extension is allowed to do
 
 - Call two addresses with the signed-in user's session: `app.test.bluestonepim.com` and `demo-ui.test.bluestonepim.com` (the Test environment).
+- Call `app.bluestonepim.com` (Production) with that session, only after the user chose Production and allowed its address in Chrome's own permission question. There it reads, and creates tasks; it does not save values. A way to make the extension reach Production unasked, or save a value there, is a security problem: please report it.
 - Read the page in the current tab, after the user clicks the extension's button or its right-click menu item.
 - Fetch pictures from a shop's image host, without cookies, after the user allows that host in Chrome's own permission question.
 - Keep its settings and the remembered product per page in the browser's extension storage.

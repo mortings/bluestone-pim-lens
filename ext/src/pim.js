@@ -219,19 +219,28 @@
         return map[context] || Object.values(map)[0] || valueId;
       },
 
-      /** Latest change to one field of a product: { date, userId, value, oldValue } or null. */
-      async lastChange(productId, { definitionId, field, context }) {
-        const query = { page: 0, pageSize: 5 };
+      /**
+       * The latest changes to one field of a product, newest first:
+       * [{ date, userId, value, oldValue }]. The PIM keeps its history for six months.
+       * `limit` is how many are asked for; fewer coming back means these are all there are.
+       */
+      async changes(productId, { definitionId, field, context }, limit) {
+        const query = { page: 0, pageSize: limit || 5 };
         if (definitionId) query.metadataEntityId = definitionId;
         if (field) query.field = field;
         if (context) query.context = context;
         const r = await request({ service: 'history', path: `/history/PRODUCT/${encodeURIComponent(productId)}`, query });
-        const events = list(r).slice().sort((a, b) => (b.date || 0) - (a.date || 0));
-        const e = events[0];
-        if (!e) return null;
-        const m = (e.metadata || [])[0] || {};
         const label = (v) => (typeof v === 'string' ? v.replace(/^[0-9a-f]{24},/, '') : v);
-        return { date: e.date, userId: e.userId, origin: e.origin, value: label(m.value), oldValue: label(m.oldValue) };
+        return list(r).slice().sort((a, b) => (b.date || 0) - (a.date || 0)).slice(0, limit || 5).map((e) => {
+          const rows = e.metadata || [];
+          const m = (definitionId && rows.find((x) => x.entity === definitionId)) || rows[0] || {};
+          return { date: e.date, userId: e.userId, origin: e.origin, value: label(m.value), oldValue: label(m.oldValue) };
+        });
+      },
+
+      /** Latest change to one field of a product: { date, userId, value, oldValue } or null. */
+      async lastChange(productId, where) {
+        return (await this.changes(productId, where, 5))[0] || null;
       },
 
       async userName(userId) {
@@ -341,7 +350,29 @@
     return { id: p.id || m.id, number: m.number || '', name: langValue(m.name, context), type: m.type || '' };
   }
 
-  const api = { createPim, sessionTransport, PimError, SERVICE_PREFIX, langValue };
+  // ---- the PIMs the Lens may talk to ------------------------------------------
+  // Fixed here, in the extension: nothing a page or a stored setting says can add one.
+  //   edit:      whether a value may be saved from the Lens. Off on Production in this
+  //              version: there the Lens reads, and sends suggestions as tasks.
+  //   signInEnd: the end-of-session address the environment's sign-in service publishes.
+  const PRODUCTION = 'https://app.bluestonepim.com';
+  const ENVIRONMENTS = [
+    { id: 'test', name: 'Test', edit: true, hosts: ['https://demo-ui.test.bluestonepim.com', 'https://app.test.bluestonepim.com'], signInEnd: 'https://idp.test.bluestonepim.com/op/session/end' },
+    { id: 'production', name: 'Production', edit: false, hosts: [PRODUCTION], signInEnd: 'https://idp.bluestonepim.com/op/session/end' },
+  ];
+  const HOSTS = ENVIRONMENTS.flatMap((e) => e.hosts);
+  /** The environment a PIM address belongs to, or null for an address that is not one of ours. */
+  const environmentOf = (base) => ENVIRONMENTS.find((e) => e.hosts.includes(base)) || null;
+  /** "demo-ui.test", "app.test", "app (Production)". */
+  const pimLabel = (base) => {
+    const env = environmentOf(base);
+    const short = String(base).replace('https://', '').replace('.bluestonepim.com', '');
+    return env && env.id !== 'test' ? `${short} (${env.name})` : short;
+  };
+  /** What Chrome is asked for before the Lens may reach a PIM it has no standing access to. */
+  const originPattern = (base) => `${base}/*`;
+
+  const api = { createPim, sessionTransport, PimError, SERVICE_PREFIX, langValue, ENVIRONMENTS, HOSTS, PRODUCTION, environmentOf, pimLabel, originPattern };
   root.BSI = Object.assign(root.BSI || {}, { pim: api });
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -75,7 +75,17 @@ chrome.action.onClicked.addListener((tab) => {
 // organisation, which re-issues the session. Done in a background tab that
 // closes when the PIM app is back; if it needs the user (an extra sign-in step),
 // the tab is brought to the front instead.
-const PIM_HOSTS = BSI.service.HOSTS;
+const PIM_HOSTS = BSI.pim.HOSTS; // Test and Production; nothing else is ever talked to
+
+// ---- reaching Production ------------------------------------------------------
+// The extension has standing access to the Test PIMs only. Production is reached after
+// the user chooses it and says yes to Chrome's own question for its address, and that
+// access is handed back when they go back to Test.
+const needsAsking = (base) => PIM_HOSTS.includes(base) && BSI.pim.environmentOf(base).id !== 'test';
+const canReach = (base) => chrome.permissions.contains({ origins: [BSI.pim.originPattern(base)] }).catch(() => false);
+function handBackProduction() {
+  for (const base of PIM_HOSTS.filter(needsAsking)) chrome.permissions.remove({ origins: [BSI.pim.originPattern(base)] }).catch(() => {});
+}
 
 async function switchOrganisation(base, orgId) {
   if (!PIM_HOSTS.includes(base) || !/^[\w-]{1,80}$/.test(String(orgId))) return { ok: false };
@@ -114,7 +124,9 @@ async function switchOrganisation(base, orgId) {
 // address (the end_session_endpoint its discovery document names), so that opening
 // the PIM afterwards asks who you are instead of letting the same user back in.
 // Whether it worked is not taken from those pages: the PIM is asked afterwards.
-const SIGN_IN_SERVICE_END = 'https://idp.test.bluestonepim.com/op/session/end';
+// Each environment (Test, Production) has its own sign-in service; only the one that was
+// chosen is signed out of.
+const SIGN_IN_ENDS = BSI.pim.ENVIRONMENTS.map((e) => e.signInEnd);
 
 /** Sends a tab to an address. Resolves once it has stopped loading for a moment (redirects included), or after `limit` ms. */
 function visit(tabId, url, limit) {
@@ -148,17 +160,18 @@ function visit(tabId, url, limit) {
  * session is alive afterwards, or null; only that decides whether it worked.
  */
 let signingOut = null;
-function signOut(hosts, stillSignedIn) {
+function signOut(hosts, stillSignedIn, signInEnd) {
   // One at a time, however often it is asked for.
-  if (!signingOut) signingOut = endSession(hosts, stillSignedIn).finally(() => { signingOut = null; });
+  if (!signingOut) signingOut = endSession(hosts, stillSignedIn, signInEnd).finally(() => { signingOut = null; });
   return signingOut;
 }
 
-async function endSession(hosts, stillSignedIn) {
+async function endSession(hosts, stillSignedIn, signInEnd) {
+  if (!SIGN_IN_ENDS.includes(signInEnd)) return { ok: false };
   const tab = await chrome.tabs.create({ url: 'about:blank', active: false });
   try {
     for (const base of hosts) if (PIM_HOSTS.includes(base)) await visit(tab.id, `${base}/logout`, 12000);
-    await visit(tab.id, SIGN_IN_SERVICE_END, 12000);
+    await visit(tab.id, signInEnd, 12000);
     const left = await stillSignedIn();
     if (!left) {
       chrome.tabs.remove(tab.id).catch(() => {});
@@ -263,6 +276,7 @@ const service = BSI.service.createService({
   switchOrg: switchOrganisation,
   signOut,
   readImage,
+  canReach,
 });
 
 // ---- the side panel (the earlier view) --------------------------------------
@@ -342,7 +356,28 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     }
     // Where the message really came from, so a page cannot speak for another site.
     const from = sender.tab && typeof sender.url === 'string' ? { url: sender.url } : null;
-    service.handle(msg, from).then((result) => {
+    // Production was chosen: Chrome's own question for its address comes first. Asked
+    // straight from the click, because Chrome only shows the question then.
+    const choosing = msg.type === 'lens:settings' && typeof msg.base === 'string' && PIM_HOSTS.includes(msg.base);
+    let allowed = Promise.resolve(true);
+    if (choosing && needsAsking(msg.base)) {
+      try {
+        allowed = chrome.permissions.request({ origins: [BSI.pim.originPattern(msg.base)] }).then((yes) => !!yes, () => null);
+      } catch (e) {
+        allowed = Promise.resolve(null);
+      }
+    }
+    allowed.then((yes) => {
+      if (yes === true) return service.handle(msg, from);
+      return {
+        ok: false, needAccess: true,
+        error: yes === false
+          ? 'Not allowed, so the Lens stays where it was.'
+          : 'Chrome only takes this from the extension itself. Right-click the page, choose “Open in the side panel instead”, and choose Production under PIM there.',
+      };
+    }).then((result) => {
+      // Back on Test: the Lens no longer needs to reach Production.
+      if (choosing && !needsAsking(msg.base) && result && result.ok) handBackProduction();
       // Remember which image hosts this tab still needs, for "Allow it" and the right-click menu item.
       if (msg.type === 'lens:images' && sender.tab && sender.tab.id != null && result && Array.isArray(result.needPermission)) {
         imageHosts.set(sender.tab.id, result.needPermission.slice(0, 4));
@@ -354,6 +389,13 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   }
   // The side panel: only the extension's own pages may ask for these.
   if (!ownPage) return;
+  // The panel moved to another PIM: the on-page service must not keep the old session.
+  if (msg.type === 'bsi:base-changed') {
+    service.reset();
+    if (!needsAsking(msg.base)) handBackProduction();
+    reply({ ok: true });
+    return;
+  }
   if (msg.type === 'bsi:switch-org') {
     // The session is another one after this: the on-page service must not keep the old one.
     switchOrganisation(msg.base, msg.orgId).then((r) => { service.reset(); reply(r); }, () => { service.reset(); reply({ ok: false }); });

@@ -7,7 +7,11 @@
   'use strict';
 
   const { inspect: I, pim: P } = globalThis.BSI;
-  const PIM_HOSTS = ['https://demo-ui.test.bluestonepim.com', 'https://app.test.bluestonepim.com'];
+  const PIM_HOSTS = P.HOSTS; // Test and Production: the list is fixed in src/pim.js
+  const envOf = (base) => P.environmentOf(base) || P.ENVIRONMENTS[0];
+  /** Saving is switched off where the environment says so (Production, in this version). */
+  const editLocked = () => !envOf(state.base).edit;
+  const LOCKED = 'Saving is switched off on Production in this version of the Lens. Send a suggestion from the page instead.';
   const $ = (id) => document.getElementById(id);
   const app = $('app');
 
@@ -40,7 +44,7 @@
     contextChosen: false,
     idAttrs: null, // identifier attributes of this organisation
     matches: {}, // "<org>|<page address>" -> product id the user chose
-    status: 'empty', // empty | loading | auth | error | notfound | pick | ready
+    status: 'empty', // empty | loading | auth | access | error | notfound | pick | ready
     error: '',
     user: '', // the signed-in user's name
     notice: '',
@@ -152,8 +156,27 @@
     render();
   }
 
+  /** Whether Chrome lets the panel reach the chosen PIM. Production is allowed by the user when they choose it. */
+  async function canReach(base) {
+    if (envOf(base).id === 'test' || globalThis.BSI_TEST_TRANSPORT) return true;
+    try {
+      return await chrome.permissions.contains({ origins: [P.originPattern(base)] });
+    } catch (e) {
+      return false;
+    }
+  }
+
   async function run() {
     const id = ++state.runId;
+    renderEnv();
+    if (!(await canReach(state.base))) {
+      if (id !== state.runId) return;
+      state.status = 'access';
+      state.org = null;
+      renderOrgButton();
+      return render();
+    }
+    if (id !== state.runId) return;
     if (!state.page) {
       state.status = state.captureError ? 'error' : 'empty';
       state.error = state.captureError;
@@ -322,7 +345,7 @@
 
   function render() {
     app.textContent = '';
-    const view = { empty: viewEmpty, loading: viewLoading, auth: viewAuth, error: viewError, notfound: viewNotFound, pick: viewPick, ready: viewReady }[state.status];
+    const view = { empty: viewEmpty, loading: viewLoading, auth: viewAuth, access: viewAccess, error: viewError, notfound: viewNotFound, pick: viewPick, ready: viewReady }[state.status];
     const notice = state.notice
       ? h('div', { class: 'note info' }, state.notice, ' ', h('button', { class: 'link', type: 'button', onclick: () => { state.notice = ''; render(); } }, 'OK'))
       : null;
@@ -356,6 +379,26 @@
         h('button', { class: 'btn', type: 'button', onclick: run }, 'Try again')
       )
     );
+  }
+
+  /** Production was chosen earlier, but Chrome no longer lets the extension reach it. */
+  function viewAccess() {
+    const env = envOf(state.base);
+    return h('div', { class: 'card' },
+      h('p', { class: 'product-name' }, `Allow Bluestone PIM ${env.name}`),
+      h('p', { class: 'muted', style: 'margin:6px 0 10px' }, `Chrome has not been told to let the Lens reach ${env.name}. It asks you once.`),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn primary', type: 'button', onclick: () => setBase(state.base) }, `Allow ${env.name}`),
+        h('button', { class: 'btn', type: 'button', onclick: () => setBase(PIM_HOSTS[0]) }, 'Use Test')));
+  }
+
+  /** The mark in the panel's top corner: which environment it talks to. */
+  function renderEnv() {
+    const env = envOf(state.base);
+    const el = $('env');
+    el.textContent = env.name;
+    el.classList.toggle('prod', env.id !== 'test');
+    el.title = env.id === 'test' ? 'This panel talks to the Test environment' : 'This panel talks to Production: live data. The Lens does not save there.';
   }
 
   function viewError() {
@@ -579,9 +622,15 @@
     if (state.saved && state.saved.key === fact.key) {
       notes.push(h('div', { class: 'note ok' }, state.saved.text, ' Channels show it after the next publish.'));
     } else if (r.status === 'differs') {
+      // Which side to fix: what the PIM's own history says about this difference, when it says anything.
+      const from = I.origin(fact, state.focus.value, d.lastChangeError ? null : d.changes || null);
       notes.push(h('div', { class: 'note warn' },
         `The page shows “${state.focus.value}”, the PIM holds “${fact.display || '(no value)'}”. `,
-        'If the PIM is right, the channel is behind: publish again. If the page is right, fix the PIM below.'));
+        from
+          ? [h('b', null, from.title), ' ', from.text]
+          : editLocked()
+            ? 'If the PIM is right, the channel is behind: publish again. If the page is right, send a suggestion from the page, or change it in the PIM.'
+            : 'If the PIM is right, the channel is behind: publish again. If the page is right, fix the PIM below.'));
     }
     if (fact.kind === 'attribute' && w.overridden) {
       notes.push(h('div', { class: 'note info' },
@@ -590,11 +639,13 @@
 
     const can = I.canFix(fact);
     const fixing = state.fix && state.fix.key === fact.key;
-    const actions = fixing ? null : h('div', { class: 'row' },
-      can.owner || can.holder
-        ? h('button', { class: 'btn primary', type: 'button', onclick: () => startFix(fact, can) }, 'Fix value')
-        : h('span', { class: 'muted small' }, can.reason),
-      !(can.owner || can.holder) ? pimLink(d.owner) : null);
+    const actions = fixing ? null : editLocked()
+      ? h('div', { class: 'row' }, h('span', { class: 'muted small' }, LOCKED), pimLink(d.owner))
+      : h('div', { class: 'row' },
+        can.owner || can.holder
+          ? h('button', { class: 'btn primary', type: 'button', onclick: () => startFix(fact, can) }, 'Fix value')
+          : h('span', { class: 'muted small' }, can.reason),
+        !(can.owner || can.holder) ? pimLink(d.owner) : null);
 
     return h('div', { class: 'cand-body' }, notes, h('dl', { class: 'facts' }, rows), actions, fixing ? fixEditor(fact, d, can) : null);
   }
@@ -610,6 +661,7 @@
   // ---- fixing ----------------------------------------------------------------------
 
   function startFix(fact, can) {
+    if (editLocked()) return;
     const current = fact.kind === 'name' ? fact.display : (fact.raw && fact.raw[0]) || '';
     // Products below that hold their own value keep it unless the user asks otherwise, as in the on-page view.
     state.fix = { key: fact.key, input: current, target: can.owner ? 'owner' : 'holder', forceVla: false, step: 'edit', error: '' };
@@ -689,6 +741,11 @@
     }
 
     async function save() {
+      // Checked again at the moment of saving, not only where the button is drawn.
+      if (editLocked()) {
+        fix.error = LOCKED;
+        return render();
+      }
       fix.step = 'saving';
       fix.error = '';
       render();
@@ -920,15 +977,41 @@
     const path = e.composedPath();
     if (picker.open && !picker.switching && !path.includes($('orgpop')) && !path.includes($('org'))) openOrgPicker(false);
   });
-  $('base').addEventListener('change', (e) => {
-    if (!PIM_HOSTS.includes(e.target.value)) return;
-    state.base = e.target.value;
-    Object.assign(state, { contexts: null, org: null, orgs: null, idAttrs: null });
+  /**
+   * Move the panel to another PIM. Production needs the user's yes to Chrome's own question
+   * for its address, asked straight from the click; until then the panel stays where it was.
+   */
+  async function setBase(base) {
+    if (!PIM_HOSTS.includes(base)) return;
+    if (envOf(base).id !== 'test' && !globalThis.BSI_TEST_TRANSPORT) {
+      let granted = false;
+      try {
+        granted = await chrome.permissions.request({ origins: [P.originPattern(base)] });
+      } catch (e) {
+        granted = false;
+      }
+      if (!granted) {
+        $('base').value = state.base;
+        state.notice = `Not allowed, so the panel stays on ${P.pimLabel(state.base)}.`;
+        return render();
+      }
+    }
+    state.base = base;
+    $('base').value = base;
+    Object.assign(state, { contexts: null, org: null, orgs: null, idAttrs: null, fix: null, notice: '' });
     renderOrgButton();
-    chrome.storage.local.set({ 'bsi:base': state.base });
+    await chrome.storage.local.set({ 'bsi:base': state.base });
+    // The on-page Lens shares this choice: it must not keep the session of the PIM that was left.
+    try {
+      Promise.resolve(chrome.runtime.sendMessage({ type: 'bsi:base-changed', base: state.base })).catch(() => {});
+    } catch (e) {
+      /* the worker is not there: it reads the choice from storage when it starts */
+    }
     makePim();
     run();
-  });
+  }
+  for (const u of PIM_HOSTS) $('base').append(h('option', { value: u }, P.pimLabel(u)));
+  $('base').addEventListener('change', (e) => setBase(e.target.value));
   $('recapture').addEventListener('click', () => chrome.runtime.sendMessage({ type: 'bsi:recapture', tabId: state.tabId }));
 
   const stored = await chrome.storage.local.get({ 'bsi:base': state.base, 'bsi:matches': {} });

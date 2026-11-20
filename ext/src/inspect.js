@@ -282,7 +282,10 @@
     }
     try {
       const query = { definitionId: fact.definitionId };
-      const change = await pim.lastChange(out.owner.id, Object.assign(query, fact.contextAware === false ? {} : { context }));
+      // The value's recent history: its last change, and what it was before (see origin()).
+      const changes = await pim.changes(out.owner.id, Object.assign(query, fact.contextAware === false ? {} : { context }), HISTORY_LIMIT);
+      out.changes = changes;
+      const change = changes[0];
       if (change) {
         let userName = null;
         if (change.userId) userName = await pim.userName(change.userId).catch(() => null);
@@ -292,6 +295,86 @@
       out.lastChangeError = e.kind === 'permission' ? 'You do not have access to the history.' : 'History is not available.';
     }
     return out;
+  }
+
+  // ---- where a difference comes from -------------------------------------------
+  // "Differs" says the page and the PIM disagree, not which of them is wrong. The PIM's
+  // own history can often tell: the page may show what the PIM held earlier (the shop
+  // is behind), the PIM's value rounded or converted (done on the way out), or a value
+  // the PIM has not held at all (changed in the integration or in the shop).
+  //
+  // What an integration actually delivered is not known to the PIM, and the published
+  // copy is only readable with an API key, which the Lens does not hold. So this is
+  // evidence from the PIM's side, worded as such.
+
+  const HISTORY_LIMIT = 20; // changes of one value that are looked at
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const day = (ms) => {
+    const d = new Date(ms);
+    return isNaN(d) ? '' : `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+  };
+
+  /**
+   * fact: the PIM fact the page value was compared with. pageValue: what the page shows.
+   * changes: pim.changes() of that value, newest first; null when the history could not be read.
+   * Returns null when there is nothing to say, or
+   *   { kind: 'earlier' | 'rounded' | 'elsewhere', title, text, until?, since? }.
+   */
+  function origin(fact, pageValue, changes) {
+    if (!fact || fact.kind !== 'attribute' || !M.norm(pageValue)) return null;
+    // This product holds its own value while the history read is its parent's: nothing sure to say.
+    if (fact.where && fact.where.overridden) return null;
+    const now = (fact.texts || []).filter((t) => M.norm(t));
+    const same = (text) => M.valueScore(pageValue, text, fact.unit).score >= 0.85;
+    if (now.some(same)) return null; // no difference to explain
+    const shown = (v) => `“${String(v).replace(/\s+/g, ' ').trim().slice(0, 60)}”`;
+    const pimNow = now.length ? shown(String(fact.display || now[0])) : 'no value';
+
+    // A select's history may name an option by its id: read it as the option's text.
+    const options = fact.options || [];
+    let unreadable = false;
+    const readable = (v) => {
+      if (v == null || v === '') return [];
+      const text = String(v);
+      const o = options.find((x) => x.valueId === text);
+      if (o) return [o.value, o.number].filter((x) => x != null && String(x).trim()).map(String);
+      if (/^[0-9a-f]{24}$/.test(text)) unreadable = true; // an id that cannot be shown or compared
+      return [text];
+    };
+
+    const list = Array.isArray(changes) ? changes : null;
+    // 1. The page shows a value the PIM held before.
+    if (list) {
+      const was = list.find((c) => readable(c.oldValue).some(same));
+      if (was) {
+        return {
+          kind: 'earlier', until: was.date,
+          title: `The page shows what the PIM held until ${day(was.date)}.`,
+          text: `The PIM was changed after that, to ${pimNow}, so the shop has probably not picked the change up yet. Check that the product is published and synced before changing anything in the PIM.`,
+        };
+      }
+    }
+    // 2. The page shows the PIM's value rounded or converted.
+    if (now.some((t) => M.roundedFrom(pageValue, t, fact.unit))) {
+      return {
+        kind: 'rounded',
+        title: 'The page’s value looks like the PIM’s value rounded or converted.',
+        text: `${shown(pageValue)} is ${pimNow} rounded. That usually happens on the way out, in the integration or in the shop, so the PIM may well be right. Check there before changing the PIM.`,
+      };
+    }
+    // 3. The page's value has not been in the PIM as far back as the history goes.
+    if (list) {
+      list.forEach((c) => readable(c.value));
+      const since = list[0] ? list[0].date : null;
+      const whole = list.length < HISTORY_LIMIT && !unreadable; // every change on record was read
+      const held = since ? `The PIM has held ${pimNow} since ${day(since)}` : `The PIM has held ${pimNow} for the six months its history covers`;
+      return {
+        kind: 'elsewhere', since,
+        title: whole ? 'The page’s value has not been in the PIM.' : 'The page’s value is not one the PIM held recently.',
+        text: `${held}, and ${shown(pageValue)} was not its value ${whole ? (since ? 'before that either, as far as the history goes (six months)' : 'in that time') : `in its last ${list.length} changes`}. So the difference probably arises after the PIM: in the integration, or by an edit in the shop. Check those before changing the PIM.`,
+      };
+    }
+    return null;
   }
 
   /**
@@ -364,7 +447,7 @@
     return { productId: product.id, display: v.display };
   }
 
-  const api = { pickContext, detectIdAttributes, nameSimilarity, findProduct, load, traceSelection, pageReport, details, canFix, validateFix, applyFix };
+  const api = { pickContext, detectIdAttributes, nameSimilarity, findProduct, load, traceSelection, pageReport, details, origin, canFix, validateFix, applyFix };
   root.BSI = Object.assign(root.BSI || {}, { inspect: api });
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -46,9 +46,9 @@ function startPim(state) {
       res.writeHead(200, { 'content-type': 'image/png' });
       return res.end(fs.readFileSync(file));
     }
-    // The sign-in service both PIMs share: its end-of-session address answers as the real one does,
-    // with a form that sends itself.
-    if (host.split(':')[0] === 'idp.test.bluestonepim.com') {
+    // The sign-in service of each environment (the two Test PIMs share one, Production has its
+    // own): its end-of-session address answers as the real one does, with a form that sends itself.
+    if (host.split(':')[0] === 'idp.test.bluestonepim.com' || host.split(':')[0] === 'idp.bluestonepim.com') {
       if (url.pathname === '/op/session/end' && req.method === 'GET') {
         res.writeHead(200, { 'content-type': 'text/html' });
         return res.end('<!doctype html><title>Submitting Callback</title><form method="post" action="/op/session/end/confirm"><input type="hidden" name="logout" value="yes"></form><script>document.forms[0].submit()</script>');
@@ -133,7 +133,7 @@ async function launch(extDir, headless) {
     args: [
       ...(headless ? ['--headless=new'] : []),
       `--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`,
-      '--host-resolver-rules=MAP demo-ui.test.bluestonepim.com 127.0.0.1:8443, MAP app.test.bluestonepim.com 127.0.0.1:8443, MAP idp.test.bluestonepim.com 127.0.0.1:8443, MAP shop.example 127.0.0.1:8770, MAP img.shop.example 127.0.0.1:8770',
+      '--host-resolver-rules=MAP demo-ui.test.bluestonepim.com 127.0.0.1:8443, MAP app.test.bluestonepim.com 127.0.0.1:8443, MAP idp.test.bluestonepim.com 127.0.0.1:8443, MAP app.bluestonepim.com 127.0.0.1:8443, MAP idp.bluestonepim.com 127.0.0.1:8443, MAP shop.example 127.0.0.1:8770, MAP img.shop.example 127.0.0.1:8770',
       '--ignore-certificate-errors', '--remote-debugging-port=9333', '--no-first-run', '--no-default-browser-check',
     ],
   });

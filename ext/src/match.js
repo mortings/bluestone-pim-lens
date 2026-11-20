@@ -165,6 +165,33 @@
     return { score: 0, why: '' };
   }
 
+  /**
+   * Whether the page's number is the PIM's number rounded or cut off, units converted where
+   * needed: "0.25 kg" on the page against 247 g in the PIM, "12.5" against 12.46. The two
+   * are different values (valueScore says so); this says how the difference may have arisen.
+   */
+  function roundedFrom(pageValue, pimText, factUnit) {
+    const qa = parseQuantity(pageValue);
+    const qb = parseQuantity(pimText);
+    if (!qa || !qb) return false;
+    const fu = norm(factUnit || '');
+    const ua = qa.unit;
+    const ub = qb.unit || UNIT_ALIAS[fu] || fu;
+    let pim = qb.n; // the PIM's number, in the page's unit
+    if (ua && ub && ua !== ub) {
+      const da = UNITS[ua];
+      const db = UNITS[ub];
+      if (!da || !db || da[0] !== db[0]) return false;
+      pim = (qb.n * db[1]) / da[1];
+    }
+    if (sameNumber(qa.n, pim)) return false;
+    const decimals = Math.min(6, (String(qa.n).split('.')[1] || '').length);
+    const scale = Math.pow(10, decimals);
+    const rounded = Math.round(pim * scale + 1e-9) / scale;
+    const cut = Math.trunc(pim * scale + (pim < 0 ? -1e-9 : 1e-9)) / scale;
+    return sameNumber(qa.n, rounded) || sameNumber(qa.n, cut);
+  }
+
   function tokens(s) {
     return norm(s).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   }
@@ -279,7 +306,7 @@
     return UNIT_ALIAS[k] || k;
   };
 
-  const api = { norm, splitLabel, parseQuantity, parseDate, valueScore, labelScore, rank, checkPairs, unitOf };
+  const api = { norm, splitLabel, parseQuantity, parseDate, valueScore, roundedFrom, labelScore, rank, checkPairs, unitOf };
   root.BSI = Object.assign(root.BSI || {}, { match: api });
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

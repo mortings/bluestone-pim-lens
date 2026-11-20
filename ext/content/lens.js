@@ -81,6 +81,9 @@
 
   const state = {
     on: false, page: null, result: null, phase: 'idle', message: '', mode: 'suggest',
+    pref: 'suggest', // the mode the user chose; `mode` is what this PIM and role allow of it
+    env: null, // { id, name } of the PIM in use: Test or Production
+    pimNote: '',
     open: null, view: null, done: {}, details: {}, settings: false, orgs: null, assignees: null, confirmOrg: null, small: false, closed: 0,
     images: null, imageNote: '', confirmOut: false, signedOut: false, busy: '',
   };
@@ -140,6 +143,8 @@
     try {
       const r = (await chrome.runtime.sendMessage(Object.assign({ type }, at, rest))) || { ok: false, error: 'No answer from the extension.' };
       if (r.base) state.pimBase = r.base;
+      const env = (r.session && r.session.environment) || r.environment;
+      if (env && typeof env === 'object') state.env = { id: env.id === 'production' ? 'production' : 'test', name: env.id === 'production' ? 'Production' : 'Test' };
       if (r.state === 'stale' && state.on) {
         // The PIM session moved on (another organisation, PIM or language): nothing here can be trusted any more.
         Object.assign(state, { phase: 'error', message: r.error, open: null, view: null });
@@ -291,7 +296,8 @@
   async function start() {
     const prefs = await send('lens:prefs', {});
     if (!state.on) return;
-    state.mode = prefs.mode === 'edit' ? 'edit' : 'suggest';
+    state.pref = prefs.mode === 'edit' ? 'edit' : 'suggest';
+    state.mode = state.pref;
     await scan();
   }
 
@@ -309,7 +315,7 @@
   let scanCount = 0;
   async function scan(extra) {
     const mine = ++scanCount; // a later scan makes this one's answer out of date
-    Object.assign(state, { phase: 'loading', open: null, view: null, details: {}, message: '', images: null, imageNote: '', panelNote: '', signedOut: false, busy: '', confirmOut: false });
+    Object.assign(state, { phase: 'loading', open: null, view: null, details: {}, message: '', images: null, imageNote: '', panelNote: '', pimNote: '', signedOut: false, busy: '', confirmOut: false });
     // Another product: what was saved or suggested belongs to the previous one.
     if (extra && (extra.productId || extra.fresh || extra.query)) state.done = {};
     render();
@@ -317,13 +323,15 @@
     if (!state.on || mine !== scanCount) return;
     state.result = r;
     if (r.ok) state.phase = r.state;
-    else if (r.state === 'auth') state.phase = 'auth';
+    else if (r.state === 'auth' || r.state === 'access') state.phase = r.state;
     else {
       state.phase = 'error';
       state.message = r.error || 'Something went wrong.';
     }
     if (r.ok && r.session) {
-      // A role that cannot edit starts in Suggest, and the other way round.
+      // A role that cannot edit starts in Suggest, and the other way round. So does a PIM
+      // where saving is switched off (Production); the user's own choice is kept for Test.
+      state.mode = state.pref;
       if (state.mode === 'edit' && !r.session.canEdit) state.mode = 'suggest';
       if (state.mode === 'suggest' && !r.session.canSuggest && r.session.canEdit) state.mode = 'edit';
     }
@@ -729,21 +737,41 @@
     const body = h('div', { class: 'dock-body' });
     // Node.append() would write the word "null" for an absent part: drop those first.
     const add = (...parts) => body.append(...parts.flat(Infinity).filter((x) => x != null && x !== false));
+    // Live data: said in the box for as long as the Lens works on Production.
+    const band = envBand();
+    const pimAddress = (u) => (typeof u === 'string' && /^https:\/\/[a-z0-9.-]+\.bluestonepim\.com$/.test(u) ? u : null);
+    const env = state.env || { id: 'test', name: 'Test' };
+    const other = r.other && pimAddress(r.other.base) ? { base: r.other.base, name: r.other.name === 'Production' ? 'Production' : 'Test' } : null;
+    const pimNote = state.pimNote ? h('p', { class: 'note warn small', role: 'alert' }, state.pimNote) : null;
 
     if (state.phase === 'loading') {
       add(h('p', { class: 'muted' }, h('span', { class: 'spin' }), state.busy || 'Reading the page and finding the product…'));
     } else if (state.phase === 'auth') {
-      // The PIMs the Lens may talk to (fixed in the extension, Test environment only).
-      const hosts = (Array.isArray(r.hosts) ? r.hosts : []).filter((u) => /^https:\/\/[a-z0-9.-]+\.bluestonepim\.com$/.test(u));
-      const short = (u) => u.replace('https://', '').replace('.bluestonepim.com', '');
+      // The PIMs of the chosen environment (the list is fixed in the extension).
+      const hosts = (Array.isArray(r.hosts) ? r.hosts : []).filter(pimAddress);
+      // "demo-ui.test" and "app.test"; Production by its whole address.
+      const short = (u) => (/\.test\.bluestonepim\.com$/.test(u) ? u.replace('https://', '').replace('.bluestonepim.com', '') : u.replace('https://', ''));
       add(
         h('p', {}, state.signedOut
-          ? 'You are signed out of Bluestone PIM in this browser. Sign in again, as the same user or another one, then try again here.'
-          : 'Sign in to Bluestone PIM first. The Lens uses your own PIM session, in the Test environment.'),
+          ? `You are signed out of Bluestone PIM (${env.name}) in this browser. Sign in again, as the same user or another one, then try again here.`
+          : `Sign in to Bluestone PIM first. The Lens uses your own PIM session, in the ${env.name} environment.`),
         h('div', { class: 'row' },
           hosts.map((u) => h('a', { class: 'btn' + (u === r.base ? ' primary' : ''), href: u, target: '_blank', rel: 'noopener' }, `Open ${short(u)}`)),
-          // Looks on every PIM above, whichever one you signed in to.
-          h('button', { type: 'button', class: 'btn', onclick: () => scan({ anyHost: true }) }, 'Try again'))
+          // Looks on every PIM above, whichever one you signed in to. Never on the other environment.
+          h('button', { type: 'button', class: 'btn', onclick: () => scan({ anyHost: true }) }, 'Try again')),
+        other ? h('p', { class: 'muted small' },
+          other.name === 'Production' ? 'Working with production data? ' : 'Meant to work in Test? ',
+          h('button', { type: 'button', class: 'link', onclick: () => choosePim(other.base) }, `Use ${other.name}`),
+          other.name === 'Production' ? '. Chrome asks you to allow its address first. There the Lens reads and sends suggestions; it does not save.' : '.') : null,
+        pimNote
+      );
+    } else if (state.phase === 'access') {
+      add(
+        h('p', {}, `Chrome has not been told to let the Lens reach Bluestone PIM ${env.name}. It asks you once.`),
+        h('div', { class: 'row' },
+          pimAddress(r.base) ? h('button', { type: 'button', class: 'btn primary', onclick: () => choosePim(r.base) }, `Allow ${env.name}`) : null,
+          other ? h('button', { type: 'button', class: 'btn', onclick: () => choosePim(other.base) }, `Use ${other.name}`) : null),
+        pimNote
       );
     } else if (state.phase === 'error') {
       const pimUrl = /^https:\/\/[a-z0-9.-]+\.bluestonepim\.com$/.test(state.pimBase || '') ? state.pimBase : null;
@@ -767,7 +795,7 @@
         return n ? h('button', { type: 'button', class: `chip s-${kinds[0]}`, title: 'Show these in the side panel', onclick: () => openPanel(kinds[0]) }, `${n} ${label}`) : null;
       };
       if (state.small) {
-        dock.replaceChildren(head, h('div', { class: 'dock-body' }, h('div', { class: 'chips' }, chip(['match'], 'from the PIM'), chip(['differs'], c.differs === 1 ? 'differs' : 'differ'), chip(['unsure'], 'unsure'), chip(['unknown', 'empty'], 'not in the PIM'))));
+        dock.replaceChildren(...[head, band, h('div', { class: 'dock-body' }, h('div', { class: 'chips' }, chip(['match'], 'from the PIM'), chip(['differs'], c.differs === 1 ? 'differs' : 'differ'), chip(['unsure'], 'unsure'), chip(['unknown', 'empty'], 'not in the PIM')))].filter(Boolean));
         return;
       }
       add(
@@ -788,7 +816,31 @@
       );
     }
     if (state.settings && session) add(settingsPanel(session));
-    dock.replaceChildren(head, body);
+    dock.replaceChildren(...[head, band, body].filter(Boolean));
+  }
+
+  /** A band across the box while the Lens works on Production: these are live data. */
+  function envBand() {
+    if (!state.env || state.env.id !== 'production') return null;
+    return h('div', { class: 'env-band', role: 'note' }, h('b', {}, 'PRODUCTION'), h('span', { class: 'sub' }, 'Live data. Suggestions only.'));
+  }
+  const envChip = () => (state.env && state.env.id === 'production' ? h('span', { class: 'chip env-prod' }, 'Production') : null);
+
+  /**
+   * Move the Lens to another PIM. For Production the background worker first puts Chrome's
+   * own question for its address; until the answer is yes, nothing changes.
+   */
+  async function choosePim(base) {
+    state.pimNote = '';
+    const r = await send('lens:settings', { base });
+    if (!state.on) return;
+    if (!r.ok) {
+      state.pimNote = r.error || 'The PIM was not changed.';
+      return renderDock();
+    }
+    state.orgs = null;
+    state.assignees = null;
+    scan();
   }
 
   /** One line about the product's pictures, under the counts. */
@@ -825,6 +877,7 @@
   function modeSwitch(session) {
     const set = (mode) => {
       state.mode = mode;
+      state.pref = mode;
       send('lens:prefs', { mode });
       if (state.view) state.view = newView(state.open);
       render();
@@ -837,8 +890,8 @@
     return h('div', { class: 'mode' },
       h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Mode' },
         option('suggest', 'Suggest', session.canSuggest, 'Your role cannot create tasks in this organisation'),
-        option('edit', 'Edit', session.canEdit, 'Your role cannot change products in this organisation')),
-      h('span', { class: 'muted small' }, state.mode === 'edit' ? 'Changes are saved to the PIM.' : 'Suggestions go to a colleague as a task.'));
+        option('edit', 'Edit', session.canEdit, session.editLocked ? 'Saving is switched off on Production in this version of the Lens' : 'Your role cannot change products in this organisation')),
+      h('span', { class: 'muted small' }, state.mode === 'edit' ? 'Changes are saved to the PIM.' : session.editLocked ? 'On Production the Lens does not save. Suggestions go to a colleague as a task.' : 'Suggestions go to a colleague as a task.'));
   }
 
   async function toggleSettings() {
@@ -882,17 +935,15 @@
       await send('lens:settings', { contextId: lang.value });
       scan();
     }));
-    const pim = h('select', { 'aria-label': 'PIM' }, session.hosts.map((u) => h('option', { value: u, selected: u === session.base }, u.replace('https://', '').replace('.bluestonepim.com', ''))));
-    pim.addEventListener('change', trusted(async () => {
-      await send('lens:settings', { base: pim.value });
-      state.orgs = null;
-      state.assignees = null;
-      scan();
-    }));
+    const pims = Array.isArray(session.pims) ? session.pims : session.hosts.map((u) => ({ base: u, label: u.replace('https://', '').replace('.bluestonepim.com', '') }));
+    const pim = h('select', { 'aria-label': 'PIM' }, pims.map((x) => h('option', { value: x.base, selected: x.base === session.base }, x.label)));
+    // Choosing Production puts Chrome's question for its address first; see choosePim().
+    pim.addEventListener('change', trusted(() => choosePim(pim.value)));
     return h('div', { class: 'settings' },
       h('label', {}, h('span', {}, 'Organisation'), orgPicker(session)),
       h('label', {}, h('span', {}, 'Language'), lang),
       h('label', {}, h('span', {}, 'PIM'), pim),
+      state.pimNote ? h('p', { class: 'note warn small', role: 'alert' }, state.pimNote) : null,
       h('label', {}, h('span', {}, 'Suggestions go to'), assigneeSelect()),
       h('div', { class: 'row' },
         h('button', { type: 'button', class: 'link', onclick: () => { readPage(); scan(); } }, 'Read the page again')),
@@ -922,7 +973,7 @@
     Object.assign(state, { busy: '', orgs: null, assignees: null });
     if (r.ok) {
       // Nothing from the PIM stays on the page once nobody is signed in.
-      Object.assign(state, { phase: 'auth', signedOut: true, result: { ok: false, state: 'auth', base: r.base, hosts: r.hosts }, done: {}, details: {}, images: null });
+      Object.assign(state, { phase: 'auth', signedOut: true, result: { ok: false, state: 'auth', base: r.base, hosts: r.hosts, environment: r.environment, other: r.other }, done: {}, details: {}, images: null });
     } else {
       Object.assign(state, { phase: 'error', message: r.error || 'Could not sign out. Open the PIM and sign out there.' });
     }
@@ -1012,7 +1063,7 @@
     const entry = entries().get(key);
     if (entry && entry.item.fact && !state.details[baseOf(key)]) {
       const scanned = scanCount;
-      send('lens:details', { productId: state.result.product.id, factKey: entry.item.fact.key }).then((d) => {
+      send('lens:details', { productId: state.result.product.id, factKey: entry.item.fact.key, pageValue: entry.item.value }).then((d) => {
         if (scanned !== scanCount) return; // the page was read again meanwhile: this belongs to the earlier product
         state.details[baseOf(key)] = d.ok ? d : { failed: true };
         if (state.open === key && state.view && state.view.step === 'form') renderPopKeepingInput();
@@ -1073,7 +1124,7 @@
     }
 
     const head = h('div', { class: 'pop-head' },
-      h('span', { class: `chip s-${status}` }, (STATUS[status] || STATUS.unknown).chip),
+      h('span', { class: 'chips' }, h('span', { class: `chip s-${status}` }, (STATUS[status] || STATUS.unknown).chip), envChip()),
       h('button', { type: 'button', class: 'icon', 'aria-label': 'Close', onclick: closePop }, '×'));
     const title = h('h2', {}, f ? f.label : item.label || 'Value', f && item.label && item.label !== f.label && key.startsWith('pair') ? h('span', { class: 'muted' }, ` · “${item.label}” on this page`) : null);
 
@@ -1105,6 +1156,10 @@
         parts.push(h('div', { class: 'note info' }, 'Nothing in the PIM matches this value. ',
           h('button', { type: 'button', class: 'link', onclick: () => startChoose() }, 'Choose the attribute it belongs to')));
       }
+      // Which side to fix: what the PIM's own history says about this difference.
+      if (d && d.origin && (item.status === 'differs' || item.status === 'empty')) {
+        parts.push(h('div', { class: 'note origin' }, h('b', {}, d.origin.title), ' ', d.origin.text));
+      }
       const suggesting = state.mode === 'suggest' || v.asSuggest;
       if (suggesting) parts.push(session.canSuggest ? suggestForm(key, item) : h('div', { class: 'note warn' }, 'Your role in this organisation cannot create tasks.'));
       else parts.push(editForm(key, item));
@@ -1126,7 +1181,7 @@
       caption ? h('span', { class: 'muted small' }, caption) : null);
     const parts = [
       h('div', { class: 'pop-head' },
-        h('span', { class: `chip s-${status}` }, (STATUS[status] || STATUS.unknown).chip),
+        h('span', { class: 'chips' }, h('span', { class: `chip s-${status}` }, (STATUS[status] || STATUS.unknown).chip), envChip()),
         h('button', { type: 'button', class: 'icon', 'aria-label': 'Close', onclick: closePop }, '×')),
       h('h2', {}, 'Product picture'),
       h('div', { class: 'pics' },
@@ -1545,6 +1600,12 @@
       box-shadow: 0 12px 40px rgba(20, 30, 50, .32); padding: 11px 13px 13px; display: grid; gap: 9px; }
     .pop.sheet { position: fixed; left: 8px; right: 8px; bottom: 8px; top: auto; width: auto; max-height: 75vh; overflow: auto; }
     .pop-head { display: flex; justify-content: space-between; align-items: center; }
+    .pop-head .chips { display: flex; gap: 6px; align-items: center; margin: 0; }
+    .note.origin { background: var(--soft); border-left: 3px solid var(--blue); border-radius: 0 6px 6px 0; }
+    .chip.env-prod { background: var(--bad); color: #fff; }
+    .env-band { display: flex; gap: 8px; align-items: baseline; padding: 4px 12px; background: var(--bad); color: #fff; font-size: 11px; }
+    .env-band b { letter-spacing: .06em; }
+    .env-band .sub { opacity: .95; }
     .pop h2 { margin: 0; font-size: 15px; line-height: 1.3; color: var(--ink); overflow-wrap: anywhere; }
     .pop h2 .muted { font-weight: 400; font-size: 12px; }
     dl { margin: 0; display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 5px 10px; }
